@@ -20,7 +20,7 @@ The figure above illustrates the step-by-step improvement of the vehicle's estim
 * **3. Loop Closure (Purple):** The final optimized trajectory. By detecting when the vehicle returns to a previous location and adding global constraints to the pose graph, the system eliminates the accumulated drift.
 * **4. Ground Truth (Cyan):** The actual path taken by the vehicle. Note how the **Loop Closure** result overlaps almost perfectly with this reference.
 
-Key features include:
+## Key features include:
 * **Feature Tracking:** Persistent tracking of 3D landmarks across multiple stereo frames using outlier rejection and PnP (Perspective-n-Point) algorithms.
 * **Visual Odometry:** Initial trajectory estimation using frame-to-frame consensus matching.
 * **Bundle Adjustment:** Local optimization of camera poses and 3D landmarks using a sliding window approach to refine the trajectory.
