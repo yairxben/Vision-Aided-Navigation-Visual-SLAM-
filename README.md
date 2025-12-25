@@ -1,7 +1,7 @@
 # Vision Aided Navigation (Visual SLAM)
 
 ## Project Description
-This project implements a complete Visual Simultaneous Localization and Mapping (vSLAM) system designed to estimate the trajectory of a vehicle using stereo camera data. The system evolves from basic feature tracking into a robust navigation engine using factor graph optimization.
+This project implements a complete Visual Simultaneous Localization and Mapping (vSLAM) system. The system takes **stereo camera frames** captured from a moving vehicle as input and processes them to reconstruct the **vehicle's path (trajectory)**. By applying advanced computer vision algorithms to the images and refining the results through **factor graph optimization**, the project evolves from basic feature tracking into a robust navigation engine.
 
 ## Motivation
 Accurate self-localization is a critical challenge for autonomous vehicles, especially in "GPS-denied" environments (such as tunnels, urban canyons, or indoor spaces).
