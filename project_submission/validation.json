@@ -1,0 +1,41 @@
+{
+  "components": {
+    "bundle_clean_final": 33,
+    "final_report": 16,
+    "loop_closure_clean_final": 28
+  },
+  "final_report": {
+    "artifact_count": 16,
+    "figure_count": 12,
+    "scientific_recomputation": false,
+    "status": "PASS"
+  },
+  "git_commit_created": false,
+  "historical_packages_modified": false,
+  "protected_inputs_modified": false,
+  "push_performed": false,
+  "requirements": {
+    "classification_counts": {
+      "MISSING": 12,
+      "OPTIONAL": 1,
+      "PASS": 52
+    },
+    "row_count": 65
+  },
+  "schema": "project-submission-final-validation-v1",
+  "scientific_recomputation": false,
+  "status": "PASS",
+  "traceability": {
+    "figure_generator_location_count": 13,
+    "line_ranges_refreshed_after_final_source_edit": true,
+    "scientific_stage_location_count": 11
+  },
+  "tracking": {
+    "change_required": false,
+    "figure_count": 6,
+    "frame_count": 3360,
+    "status": "PASS",
+    "track_count": 758478,
+    "transition_count": 3359
+  }
+}

@@ -1,0 +1,443 @@
+{
+  "schema": "exercise5-production-config",
+  "schema_version": 1,
+  "milestone": "E5-A02-amended-by-E5-I03A",
+  "status": "reviewed-production-configuration-amended",
+  "created_utc": "2026-07-24T00:01:25Z",
+  "repository": {
+    "branch": "main",
+    "head_commit": "f3855b9d567a3be751e1df30bb25b9a6137e715d",
+    "upstream": "origin/main",
+    "ahead": 0,
+    "behind": 0
+  },
+  "canonical_inputs": {
+    "tracking_database": {
+      "path": "diagnostics/ex4_final/tracking_database.pkl",
+      "size_bytes": 2484226639,
+      "sha256": "e0eba0d75887af544f3fdc0ada50932adb5c1edf52ea983a2a1be2c8244ce187",
+      "streaming_digest_schema": "exercise4-trackingdb-stream-v1",
+      "streaming_digest": "186fe6dbab6371cf1e4474ab833059e960218b8f6968a6c5caa597bc95fa46eb"
+    },
+    "companion": {
+      "path": "diagnostics/ex4_final/tracking_database_companion.json",
+      "sha256": "5bbd24404acf9c0b1b54bcd9183a1a711f574e532a327043bdd2477cb7e76360"
+    },
+    "exercise4_manifest": {
+      "path": "diagnostics/ex4_final/manifest.json",
+      "sha256": "6dee784706b1ca1c85a3c8a94946bfa5aa542a6bd4edf53898ec608548e70932"
+    },
+    "transition_table": {
+      "path": "diagnostics/ex4_final/transitions.csv",
+      "sha256": "43f2e18747840aac08ec828408ffc3a39eb70b95a537cf79de2b1a957c78dee9"
+    },
+    "calibration": {
+      "path": "dataset/sequences/00/calib.txt",
+      "sha256": "7cfc9ab047da6bd829d669e31b2a0d72c278d084fa0c02f2f0320795d51a5d01"
+    },
+    "ground_truth": {
+      "path": "dataset/poses/00.txt",
+      "sha256": "2edfc4cbd8bfbbc990727d932f1dba9edee036bca5769a275536507de1d5fefd"
+    }
+  },
+  "source_contract": {
+    "exercise5_geometry.py": "5502e71ff256cd8b25adb58786974df69afa309d68222de5bd749fa1b14fb6c8",
+    "exercise5_bundle_window.py": "59a19455c6b3d5f5e187fca8aecd4541aebabf3a843714940e21dd07dbd0ed65",
+    "validate_ex5_single_window.py": "d396605f5156a1da254155a0a0e00c7a051b9a6b333925093a05958885accc1a",
+    "exercise5_full_run.py": "3ab6b4e20c8c348521f739f495cd1b8586ee534b294b63a71c77ae957ec9fa56",
+    "exercise5_artifacts.py": "6149e1120745da06eb2bcacc56005b00b13a168c464f79767c971418b79d68bb"
+  },
+  "coordinate_contract": {
+    "canonical_pose": "E_i = T_Ci_from_W, world-to-camera",
+    "gtsam_global_camera_pose": "X_i = inverse(E_i) = T_W_from_Ci",
+    "window_camera_pose": "X_i^(a) = E_a * inverse(E_i) = T_Ca_from_Ci",
+    "window_anchor": "X_a^(a) = identity",
+    "edge_measurement": "Delta_ab = X_a^(a).between(X_b^(a)) = T_Ca_from_Cb",
+    "between_factor": "BetweenFactorPose3(c_a, c_b, Delta_ab, noise)",
+    "composed_bundle_trajectory": "G_0=identity; G_b=G_a.compose(Delta_ab), hence G_k=T_C0_from_Ck",
+    "tangent_order": ["rot_x_rad", "rot_y_rad", "rot_z_rad", "trans_x_m", "trans_y_m", "trans_z_m"]
+  },
+  "calibration": {
+    "fx_px": 718.856,
+    "fy_px": 718.856,
+    "skew_px": 0.0,
+    "cx_px": 607.1928,
+    "cy_px": 185.2157,
+    "baseline_m": 0.5371657188644179,
+    "stereo_measurement_order": ["u_left_px", "u_right_px", "v_mean_px"]
+  },
+  "keyframe_selection": {
+    "rule_id": "pnp-motion-12m-or-6deg-tail-safe-v1",
+    "source": "canonical companion poses and transition metadata only",
+    "first_frame_id": 0,
+    "final_frame_id": 3359,
+    "minimum_actual_frames_per_window": 5,
+    "maximum_actual_frames_per_window": 20,
+    "minimum_endpoint_delta_frames": 4,
+    "maximum_endpoint_delta_frames": 19,
+    "path_distance_threshold_m": 12.0,
+    "relative_rotation_threshold_deg": 6.0,
+    "selection": "From current keyframe a, scan candidate FrameIds in ascending order from a+4 through min(a+19,3355); select the first whose accumulated canonical-PnP inter-frame camera-center path distance is at least 12 m OR whose canonical-PnP relative rotation angle is at least 6 degrees. If none qualifies, select the upper scan bound.",
+    "relative_rotation_formula": "degrees(acos(clamp((trace(R_j * transpose(R_a))-1)/2,-1,1)))",
+    "path_distance_formula": "sum(norm(C_i-C_(i-1))) for i=a+1..j",
+    "tie_break": "earliest FrameId; path and rotation equality both qualify",
+    "tail_policy": "If 4 through 19 transitions remain, select frame 3359 directly. Candidate upper bounds never exceed 3355, reserving at least four transitions for a later final window.",
+    "ordered_keyframe_ids": [
+      0, 7, 11, 15, 19, 23, 27, 31, 36, 46, 63, 78, 89, 104, 108, 112,
+      116, 120, 124, 128, 147, 163, 178, 193, 208, 223, 238, 253, 270, 289,
+      307, 319, 323, 327, 331, 335, 339, 343, 347, 356, 372, 386, 401, 417,
+      436, 455, 474, 482, 486, 490, 494, 498, 502, 506, 511, 527, 540, 552,
+      564, 576, 588, 600, 613, 630, 638, 642, 646, 650, 654, 658, 662, 666,
+      684, 698, 712, 726, 742, 761, 777, 790, 803, 816, 830, 848, 852, 856,
+      860, 864, 868, 872, 876, 885, 900, 913, 926, 939, 952, 965, 978, 990,
+      1003, 1019, 1027, 1031, 1035, 1039, 1043, 1047, 1051, 1055, 1071,
+      1085, 1099, 1116, 1130, 1134, 1138, 1142, 1146, 1150, 1154, 1158,
+      1170, 1174, 1178, 1182, 1186, 1190, 1196, 1214, 1229, 1243, 1258,
+      1277, 1289, 1298, 1306, 1311, 1315, 1319, 1323, 1327, 1331, 1337,
+      1351, 1363, 1374, 1384, 1394, 1404, 1414, 1424, 1435, 1449, 1454,
+      1458, 1462, 1466, 1470, 1474, 1478, 1482, 1501, 1516, 1526, 1540,
+      1546, 1552, 1566, 1579, 1589, 1597, 1613, 1631, 1646, 1659, 1672,
+      1686, 1697, 1701, 1705, 1709, 1728, 1745, 1760, 1775, 1789, 1803,
+      1818, 1831, 1850, 1854, 1858, 1862, 1866, 1870, 1874, 1878, 1883,
+      1898, 1911, 1923, 1935, 1947, 1960, 1972, 1985, 1999, 2018, 2022,
+      2026, 2030, 2034, 2038, 2042, 2058, 2071, 2084, 2097, 2109, 2122,
+      2138, 2154, 2165, 2184, 2200, 2214, 2230, 2237, 2241, 2245, 2250,
+      2266, 2279, 2291, 2304, 2318, 2331, 2335, 2339, 2343, 2347, 2351,
+      2355, 2359, 2365, 2380, 2393, 2405, 2417, 2429, 2441, 2454, 2467,
+      2479, 2493, 2511, 2527, 2540, 2552, 2564, 2577, 2595, 2599, 2603,
+      2607, 2611, 2615, 2619, 2623, 2641, 2655, 2668, 2681, 2695, 2707,
+      2717, 2731, 2742, 2761, 2767, 2771, 2775, 2779, 2783, 2787, 2791,
+      2795, 2809, 2821, 2833, 2846, 2858, 2870, 2884, 2888, 2892, 2896,
+      2900, 2904, 2908, 2912, 2916, 2920, 2926, 2935, 2947, 2958, 2969,
+      2981, 2994, 3005, 3009, 3013, 3017, 3021, 3025, 3029, 3041, 3055,
+      3067, 3079, 3091, 3102, 3113, 3124, 3135, 3146, 3160, 3178, 3182,
+      3186, 3190, 3194, 3198, 3202, 3206, 3213, 3227, 3240, 3253, 3268,
+      3279, 3283, 3287, 3291, 3295, 3299, 3303, 3307, 3311, 3329, 3333,
+      3337, 3341, 3359
+    ],
+    "statistics": {
+      "keyframe_count": 356,
+      "window_count": 355,
+      "window_actual_frames": {
+        "minimum": 5,
+        "median": 12.0,
+        "mean": 10.461971830985915,
+        "maximum": 20
+      },
+      "path_distance_m": {
+        "minimum": 0.7599270682146084,
+        "median": 7.948366821330637,
+        "mean": 7.2612809320389085,
+        "maximum": 13.09267327448515
+      },
+      "relative_rotation_deg": {
+        "minimum": 0.18211574970792496,
+        "median": 6.212103751438164,
+        "mean": 6.505033634333332,
+        "maximum": 36.229072949550044
+      },
+      "selection_reason_counts": {
+        "path_only": 153,
+        "rotation_only": 191,
+        "both": 2,
+        "maximum_span_fallback": 8,
+        "final_tail": 1
+      },
+      "minimum_transition_connectivity": 186,
+      "low_connectivity_definition": "window contains at least one transition with connectivity < 300",
+      "low_connectivity_window_indices": [
+        15, 29, 30, 35, 36, 37, 91, 92, 94, 95, 96, 97, 104, 105, 117,
+        129, 182, 183, 187, 235, 236, 244, 245, 246, 247, 271, 287, 288,
+        289, 290, 291, 292, 293, 307, 309, 319, 320, 325, 326, 327, 328,
+        329, 330, 340, 350, 354
+      ]
+    }
+  },
+  "scientific_configuration": {
+    "measurement_uncertainty": {
+      "model": "Diagonal.Sigmas",
+      "stereo_sigma_px": [1.0, 1.0, 1.0],
+      "stereo_covariance_px2": [
+        [1.0, 0.0, 0.0],
+        [0.0, 1.0, 0.0],
+        [0.0, 0.0, 1.0]
+      ]
+    },
+    "gauge_fixing_prior": {
+      "factor_count": 1,
+      "camera": "first camera of each window",
+      "target": "identity Pose3",
+      "model": "Diagonal.Sigmas",
+      "authorized_candidates": {
+        "A": [0.00030461741978670857, 0.00030461741978670857, 0.00030461741978670857, 0.1, 0.01, 1.0],
+        "B": [0.017453292519943295, 0.017453292519943295, 0.017453292519943295, 0.3, 0.1, 1.0]
+      },
+      "selection_rule": "eligible iff standard gtsam.Marginals construction and every covariance-validation gate pass; select the sole eligible candidate; select A if both are eligible; fail closed if neither is eligible",
+      "selected_candidate": "A",
+      "rotation_sigma_rad": [0.00030461741978670857, 0.00030461741978670857, 0.00030461741978670857],
+      "translation_sigma_m": [0.1, 0.01, 1.0],
+      "sigma_order": ["rot_x_rad", "rot_y_rad", "rot_z_rad", "trans_x_m", "trans_y_m", "trans_z_m"],
+      "additional_camera_priors": 0,
+      "landmark_priors": 0
+    },
+    "landmark_eligibility": {
+      "minimum_valid_observations": 2,
+      "minimum_distinct_frames": 2,
+      "require_unique_frame_track_pair": true,
+      "require_finite_measurement": true,
+      "require_strictly_positive_disparity": true,
+      "require_finite_backprojection": true,
+      "require_strictly_positive_initial_depth_for_every_factor": true,
+      "require_strictly_positive_final_depth_for_every_factor": true,
+      "maximum_landmark_distance_m": null,
+      "maximum_initialization_depth_m": 300.0,
+      "excessive_initialization_depth_rejection_reason": "excessive_initialization_depth",
+      "triangulation_observation": "latest valid in-window observation by greatest FrameId; on nonfinite backprojection, nonpositive depth, or initialization depth at or above 300.0 m, try earlier valid observations in descending FrameId order; retain selected FrameId and all failed attempts"
+    },
+    "validation_tolerances": {
+      "rotation_orthogonality_max_abs": 1e-09,
+      "rotation_determinant_abs": 1e-09,
+      "homogeneous_matrix_max_abs": 1e-09,
+      "identity_pose_max_abs": 1e-09,
+      "numerical_reconstruction_atol": 1e-09,
+      "covariance_symmetry_atol": 1e-09,
+      "covariance_minimum_eigenvalue": -1e-09,
+      "graph_error_nonincrease_absolute": 1e-09,
+      "graph_error_nonincrease_relative": 1e-12,
+      "positive_disparity_epsilon_px": 0.0,
+      "positive_depth_epsilon_m": 0.0
+    },
+    "optimizer": {
+      "type": "gtsam.LevenbergMarquardtOptimizer",
+      "policy": "Use the validated GTSAM 4.2 defaults without overrides; record the runtime snapshot below in every manifest.",
+      "gtsam_4_2_default_snapshot": {
+        "relative_error_tolerance": 1e-05,
+        "absolute_error_tolerance": 1e-05,
+        "total_error_tolerance": 0.0,
+        "maximum_iterations": 100,
+        "linear_solver": "MULTIFRONTAL_CHOLESKY",
+        "ordering": "COLAMD",
+        "lambda_initial": 1e-05,
+        "lambda_factor": 10.0,
+        "lambda_lower_bound": 0.0,
+        "lambda_upper_bound": 100000.0,
+        "minimum_model_fidelity": 0.001,
+        "diagonal_damping": false,
+        "minimum_diagonal": 1e-06,
+        "maximum_diagonal": 1e+32,
+        "verbosity": "SILENT",
+        "verbosity_lm": "SILENT"
+      }
+    },
+    "prohibited": [
+      "robust loss",
+      "optimized-residual outlier filtering",
+      "maximum landmark distance cutoff",
+      "additional camera prior",
+      "landmark prior",
+      "implicit production default"
+    ]
+  },
+  "exercise5_track_diagnostic": {
+    "track_id": 305,
+    "track_length": 12,
+    "ordered_frame_ids": [0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11],
+    "selection_policy": "Retained canonical lower-median eligible length among tracks of length at least 10; smallest TrackId at that length.",
+    "triangulation_observation": "last valid stereo observation, expected FrameId 11; validate at runtime",
+    "source_evidence": "diagnostics/ex4_final/reprojection.json"
+  },
+  "artifact_contract": {
+    "schema": "exercise5-final-artifact-contract",
+    "schema_version": 1,
+    "canonical_root": "diagnostics/ex5_clean_final",
+    "curated_root": "project_submission/bundle_clean_final",
+    "formats": ["JSON", "CSV", "NPZ", "PNG", "plain text log"],
+    "opaque_pickle_allowed": false,
+    "deterministic_ordering": "windows by window_index; cameras by FrameId; tracks by TrackId; factors by (FrameId, TrackId); CSV rows by declared primary key; NPZ arrays C-contiguous little-endian float64/int64 unless declared otherwise",
+    "partial_statuses": ["initializing", "running", "failed"],
+    "canonical_status": "complete-and-sealed",
+    "required_top_level": [
+      "manifest.json",
+      "configuration.json",
+      "run_state.json",
+      "checksums.sha256",
+      "windows/",
+      "track_5_1/",
+      "aggregate/data/",
+      "aggregate/figures/",
+      "provenance/generators.json",
+      "logs/"
+    ],
+    "per_window_files": {
+      "summary.json": "identity, counts, rejection reasons, initial/final errors, anchor, runtime, iterations, memory and convergence",
+      "ids.npz": "frame_ids (C,), candidate_track_ids (Tc,), accepted_track_ids (L,), rejected_track_ids (Tr,), int64",
+      "values.npz": "initial_camera_poses (C,4,4), final_camera_poses (C,4,4), initial_landmarks (L,3), final_landmarks (L,3), float64",
+      "tracks.csv": "one row per candidate TrackId with accepted flag, valid/invalid counts, distinct frames, triangulation FrameId and rejection reason",
+      "projection_residuals.csv": "one row per accepted projection factor with measurement, initial/final projection and residual components, left/right/stereo pixel distances, factor errors, start/triangulation frame and path offsets",
+      "endpoint_edge.json": "start/end FrameIds, optimized T_Cstart_from_Cend matrix, quaternion xyzw, rotation vector radians, translation metres and validation diagnostics",
+      "endpoint_covariances.npz": "joint_covariance (12,12), conditional_end_given_start_covariance (6,6), joint_information (12,12), float64",
+      "artifact_hashes.json": "SHA-256 and byte size for every sealed file in this window"
+    },
+    "first_window_additional_files": {
+      "camera_marginals.npz": "frame_ids (C,), poses (C,4,4), marginal_covariances (C,6,6)",
+      "maximum_initial_projection_factor.json": "factor identity plus initial/final measurements, projections, residuals, pixel distances and factor errors",
+      "overlay_left_initial.png": "cropped left image with measurement and initial projection",
+      "overlay_right_initial.png": "cropped right image with measurement and initial projection",
+      "overlay_left_final.png": "cropped left image with measurement and final projection",
+      "overlay_right_final.png": "cropped right image with measurement and final projection",
+      "scene_3d.png": "initial/final cameras and landmarks, axes in metres",
+      "scene_birds_eye.png": "initial/final cameras and landmarks, x-z axes in metres"
+    },
+    "aggregate_data_files": [
+      "window_metrics.csv",
+      "window_rejections.csv",
+      "all_projection_residuals.csv",
+      "keyframe_trajectories.csv",
+      "keyframe_localization_errors.csv",
+      "consecutive_relative_errors.csv",
+      "relative_subsections_100.csv",
+      "relative_subsections_400.csv",
+      "relative_subsections_800.csv",
+      "low_connectivity_windows.csv"
+    ],
+    "aggregate_figure_files": [
+      "mean_factor_error_by_window.png",
+      "median_projection_error_by_window.png",
+      "projection_error_vs_bundle_start.png",
+      "bundle_pnp_ground_truth_trajectory.png",
+      "keyframe_localization_error.png",
+      "consecutive_relative_error.png",
+      "relative_subsections_100.png",
+      "relative_subsections_400.png",
+      "relative_subsections_800.png",
+      "first_window_camera_covariances_3d.png"
+    ],
+    "producer_registry": {
+      "manifest.json": "exercise5_artifacts.py::write_and_seal_manifest",
+      "configuration.json": "exercise5_artifacts.py::snapshot_configuration",
+      "run_state.json": "exercise5_artifacts.py::update_run_state",
+      "checksums.sha256": "exercise5_artifacts.py::write_checksum_index",
+      "windows/*/summary.json": "exercise5_full_run.py::seal_window_artifacts",
+      "windows/*/ids.npz": "exercise5_full_run.py::seal_window_artifacts",
+      "windows/*/values.npz": "exercise5_full_run.py::seal_window_artifacts",
+      "windows/*/tracks.csv": "exercise5_full_run.py::seal_window_artifacts",
+      "windows/*/projection_residuals.csv": "exercise5_full_run.py::seal_window_artifacts",
+      "windows/*/endpoint_edge.json": "exercise5_full_run.py::extract_endpoint_edge",
+      "windows/*/endpoint_covariances.npz": "exercise5_full_run.py::extract_endpoint_covariances",
+      "windows/window_0000_0_7/camera_marginals.npz": "exercise5_full_run.py::extract_first_window_camera_marginals",
+      "windows/window_0000_0_7/maximum_initial_projection_factor.json": "exercise5_full_run.py::write_first_window_diagnostic",
+      "windows/window_0000_0_7/overlay_left_initial.png": "exercise5_reporting.py::plot_projection_overlay",
+      "windows/window_0000_0_7/overlay_right_initial.png": "exercise5_reporting.py::plot_projection_overlay",
+      "windows/window_0000_0_7/overlay_left_final.png": "exercise5_reporting.py::plot_projection_overlay",
+      "windows/window_0000_0_7/overlay_right_final.png": "exercise5_reporting.py::plot_projection_overlay",
+      "windows/window_0000_0_7/scene_3d.png": "exercise5_reporting.py::plot_first_window_scene",
+      "windows/window_0000_0_7/scene_birds_eye.png": "exercise5_reporting.py::plot_first_window_scene",
+      "track_5_1/track.json": "exercise5_full_run.py::write_track_diagnostic",
+      "track_5_1/residuals.csv": "exercise5_full_run.py::write_track_diagnostic",
+      "track_5_1/reprojection_error.png": "exercise5_reporting.py::plot_track_diagnostic",
+      "track_5_1/factor_error.png": "exercise5_reporting.py::plot_track_diagnostic",
+      "track_5_1/factor_vs_reprojection.png": "exercise5_reporting.py::plot_track_diagnostic",
+      "aggregate/data/window_metrics.csv": "exercise5_aggregation.py::aggregate_window_metrics",
+      "aggregate/data/window_rejections.csv": "exercise5_aggregation.py::aggregate_window_rejections",
+      "aggregate/data/all_projection_residuals.csv": "exercise5_aggregation.py::aggregate_projection_residuals",
+      "aggregate/data/keyframe_trajectories.csv": "exercise5_aggregation.py::compose_keyframe_trajectories",
+      "aggregate/data/keyframe_localization_errors.csv": "exercise5_aggregation.py::compute_keyframe_localization_errors",
+      "aggregate/data/consecutive_relative_errors.csv": "exercise5_aggregation.py::compute_consecutive_relative_errors",
+      "aggregate/data/relative_subsections_100.csv": "exercise5_aggregation.py::compute_relative_subsections",
+      "aggregate/data/relative_subsections_400.csv": "exercise5_aggregation.py::compute_relative_subsections",
+      "aggregate/data/relative_subsections_800.csv": "exercise5_aggregation.py::compute_relative_subsections",
+      "aggregate/data/low_connectivity_windows.csv": "exercise5_aggregation.py::write_low_connectivity_table",
+      "aggregate/figures/mean_factor_error_by_window.png": "exercise5_reporting.py::plot_window_errors",
+      "aggregate/figures/median_projection_error_by_window.png": "exercise5_reporting.py::plot_window_errors",
+      "aggregate/figures/projection_error_vs_bundle_start.png": "exercise5_reporting.py::plot_projection_distance",
+      "aggregate/figures/bundle_pnp_ground_truth_trajectory.png": "exercise5_reporting.py::plot_trajectories",
+      "aggregate/figures/keyframe_localization_error.png": "exercise5_reporting.py::plot_localization_error",
+      "aggregate/figures/consecutive_relative_error.png": "exercise5_reporting.py::plot_consecutive_relative_errors",
+      "aggregate/figures/relative_subsections_100.png": "exercise5_reporting.py::plot_relative_subsections",
+      "aggregate/figures/relative_subsections_400.png": "exercise5_reporting.py::plot_relative_subsections",
+      "aggregate/figures/relative_subsections_800.png": "exercise5_reporting.py::plot_relative_subsections",
+      "aggregate/figures/first_window_camera_covariances_3d.png": "exercise5_reporting.py::plot_first_window_camera_covariances",
+      "provenance/generators.json": "exercise5_artifacts.py::write_generator_registry",
+      "project_submission/bundle_clean_final/manifest.json": "exercise5_submission.py::materialize_bundle_package",
+      "project_submission/bundle_clean_final/metrics.json": "exercise5_submission.py::materialize_bundle_package",
+      "project_submission/bundle_clean_final/data/*": "exercise5_submission.py::materialize_bundle_package",
+      "project_submission/bundle_clean_final/figures/*": "exercise5_submission.py::materialize_bundle_package"
+    },
+    "curated_required": {
+      "manifest.json": "curated hashes, source links, generator links and complete-and-sealed source-manifest identity",
+      "metrics.json": "report-ready Bundle scalar metrics and requirement IDs",
+      "data/track_5_1.csv": "Exercise 5.1 machine-readable track rows",
+      "data/first_window_metrics.csv": "first-window counts/errors/maximum-factor diagnostics",
+      "data/window_metrics.csv": "all-window metrics",
+      "data/window_rejections.csv": "all-window rejection counts",
+      "data/projection_by_bundle_start.csv": "documented full-population projection aggregation",
+      "data/keyframe_trajectories.csv": "Bundle/PnP/GT keyframe poses and locations",
+      "data/keyframe_localization_errors.csv": "Bundle absolute keyframe errors",
+      "data/consecutive_relative_errors.csv": "Bundle/PnP consecutive errors versus GT",
+      "data/relative_subsections_100.csv": "length-100 Bundle relative evidence",
+      "data/relative_subsections_400.csv": "length-400 Bundle relative evidence",
+      "data/relative_subsections_800.csv": "length-800 Bundle relative evidence",
+      "figures/track_reprojection_error.png": "Exercise 5.1 reprojection error",
+      "figures/track_factor_error.png": "Exercise 5.1 factor error",
+      "figures/track_factor_vs_reprojection.png": "Exercise 5.1 relationship",
+      "figures/first_window_overlays.png": "four-panel initial/final left/right overlay",
+      "figures/first_window_scene_3d.png": "first-window 3D scene",
+      "figures/first_window_scene_birds_eye.png": "first-window bird's-eye scene",
+      "figures/mean_factor_error_by_window.png": "all-window mean factor error",
+      "figures/median_projection_error_by_window.png": "all-window median projection error",
+      "figures/projection_error_vs_bundle_start.png": "projection error against start distance",
+      "figures/bundle_pnp_ground_truth_trajectory.png": "compatible cross-stage trajectory overlay",
+      "figures/keyframe_localization_error.png": "Bundle keyframe localization error",
+      "figures/consecutive_relative_error.png": "Bundle/PnP consecutive relative error",
+      "figures/relative_subsections_100.png": "length-100 normalized relative error",
+      "figures/relative_subsections_400.png": "length-400 normalized relative error",
+      "figures/relative_subsections_800.png": "length-800 normalized relative error",
+      "figures/first_window_camera_covariances_3d.png": "Exercise 6 all-camera first-window covariance plot"
+    },
+    "relative_subsection_policy": {
+      "requested_lengths_frames": [100, 400, 800],
+      "start_frames": "every canonical keyframe for which start+length-1 <= 3359",
+      "end_frame_target": "start FrameId + length - 1",
+      "end_keyframe": "canonical keyframe minimizing absolute FrameId difference to target; ties choose smaller FrameId; end must be strictly after start",
+      "estimate": "compose saved Bundle endpoint edges from start keyframe through selected end keyframe",
+      "ground_truth_distance": "sum consecutive ground-truth camera-center distances over every actual frame from start through selected end inclusive",
+      "translation_error": "norm of translation part of inverse(GT_relative).compose(estimated_relative), metres",
+      "rotation_error": "Rodrigues magnitude of rotation part of inverse(GT_relative).compose(estimated_relative), degrees",
+      "normalized_outputs": ["translation_error_m_per_m", "translation_error_percent", "rotation_error_deg_per_m"]
+    },
+    "manifest_requirements": [
+      "schema/version and seal status",
+      "exact configuration and keyframe IDs",
+      "Git commit/tree and all source/input hashes",
+      "calibration and pose conventions",
+      "noise models, tangent ordering and units",
+      "artifact SHA-256 and byte sizes",
+      "generator file/function for every table and figure",
+      "deterministic ordering, dtype and array shapes",
+      "completed window bitmap and failure/resume history",
+      "scientific-state SHA-256"
+    ],
+    "seal_policy": "Only after all 355 window seals, aggregate regeneration, independent validation, curated-package materialization and full checksum verification may manifest.status become complete-and-sealed. The project_submission/bundle_clean_final package must not be materialized from a partial run."
+  },
+  "run_safety": {
+    "load_database_count": 1,
+    "one_process": true,
+    "maximum_live_bundle_graphs": 1,
+    "verify_window_before_release": true,
+    "resume_from_sealed_windows": true,
+    "repeat_valid_sealed_window": false,
+    "never_rebuild_exercise4": true,
+    "never_construct_pose_graph": true,
+    "never_run_loop_closure": true,
+    "stop_conditions": [
+      "canonical input or source hash mismatch",
+      "geometry or calibration contract failure",
+      "graph disconnection or dimensional underconstraint",
+      "cheirality or nonfinite value",
+      "optimization failure or graph-error increase beyond tolerance",
+      "marginal/covariance failure, nonsymmetry, non-PSD or unacceptable conditioning",
+      "memory guard failure",
+      "artifact write, reload, hash or schema failure"
+    ]
+  }
+}

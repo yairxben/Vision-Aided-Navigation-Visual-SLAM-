@@ -1,0 +1,354 @@
+{
+  "canonical_specification": "docs/submission/Project Submission - Ex8.pdf",
+  "figure_generator_locations": [
+    {
+      "formula_or_metric": "counts/transition, %, Links/frame, tracks/frame",
+      "input_artifacts": "sealed project_submission data and clean E5/E6/E7 evidence",
+      "location": {
+        "file": "project_submission/generate_current_stage.py",
+        "function_or_class": "plot_tracking_figures",
+        "line_end": 620,
+        "line_start": 496,
+        "source_sha256": "292f702526847da546bddd2c29c3564493305d4715555867d4b126220f6009f4"
+      },
+      "output_artifacts": [
+        "tracking/figures/*.png"
+      ],
+      "purpose": "Tracking package figures",
+      "units": "frames, correspondences, %, Links, tracks"
+    },
+    {
+      "formula_or_metric": "anchored trajectory, absolute error, projection aggregates, relative error",
+      "input_artifacts": "sealed project_submission data and clean E5/E6/E7 evidence",
+      "location": {
+        "file": "project_submission/generate_current_stage.py",
+        "function_or_class": "plot_pnp_figures",
+        "line_end": 2555,
+        "line_start": 2374,
+        "source_sha256": "292f702526847da546bddd2c29c3564493305d4715555867d4b126220f6009f4"
+      },
+      "output_artifacts": [
+        "pnp/figures/*.png"
+      ],
+      "purpose": "PnP package figures",
+      "units": "m, deg, px, %, deg/m"
+    },
+    {
+      "formula_or_metric": "translation error percent and rotation error divided by GT path distance",
+      "input_artifacts": "sealed project_submission data and clean E5/E6/E7 evidence",
+      "location": {
+        "file": "project_submission/finalize_report_artifacts.py",
+        "function_or_class": "plot_relative_subsection_comparison",
+        "line_end": 180,
+        "line_start": 117,
+        "source_sha256": "c06a9e4f8b390da5bdb2b70eb9f57d4cedf8408e49d3c784b268caa899532045"
+      },
+      "output_artifacts": [
+        "final_report/figures/pnp_relative_subsections_100_400_800.png",
+        "final_report/figures/bundle_relative_subsections_100_400_800.png"
+      ],
+      "purpose": "PnP combined subsections",
+      "units": "%, deg/m"
+    },
+    {
+      "formula_or_metric": "total graph error/(projection factors+prior); median stereo pixel distance",
+      "input_artifacts": "sealed project_submission data and clean E5/E6/E7 evidence",
+      "location": {
+        "file": "project_submission/finalize_report_artifacts.py",
+        "function_or_class": "plot_bundle_window_report",
+        "line_end": 240,
+        "line_start": 183,
+        "source_sha256": "c06a9e4f8b390da5bdb2b70eb9f57d4cedf8408e49d3c784b268caa899532045"
+      },
+      "output_artifacts": [
+        "final_report/figures/bundle_mean_total_graph_error_per_factor.png",
+        "final_report/figures/bundle_median_stereo_projection_error.png"
+      ],
+      "purpose": "Bundle window reporting",
+      "units": "error/factor, px"
+    },
+    {
+      "formula_or_metric": "mean sealed stereo pixel error in 1 m GT-distance bins",
+      "input_artifacts": "sealed project_submission data and clean E5/E6/E7 evidence",
+      "location": {
+        "file": "project_submission/finalize_report_artifacts.py",
+        "function_or_class": "plot_bundle_projection_distance",
+        "line_end": 334,
+        "line_start": 311,
+        "source_sha256": "c06a9e4f8b390da5bdb2b70eb9f57d4cedf8408e49d3c784b268caa899532045"
+      },
+      "output_artifacts": [
+        "final_report/figures/bundle_projection_error_vs_distance.png"
+      ],
+      "purpose": "Bundle projection-distance reporting",
+      "units": "m, px"
+    },
+    {
+      "formula_or_metric": "global R Sigma_t R^T, 2D 95% ellipse; x5/x10 radius display only",
+      "input_artifacts": "sealed project_submission data and clean E5/E6/E7 evidence",
+      "location": {
+        "file": "exercise7_report_freeze.py",
+        "function_or_class": "plot_pose_graph_snapshot_covariances",
+        "line_end": 719,
+        "line_start": 625,
+        "source_sha256": "c5846b1a6d5ee03db41415983e52eda693a0244220c303f55235cea2ab73153f"
+      },
+      "output_artifacts": [
+        "loop_closure_clean_final/figures/pose_graph_snapshots_*.png"
+      ],
+      "purpose": "Exercise 7 covariance snapshots",
+      "units": "m"
+    },
+    {
+      "formula_or_metric": "absolute X/Y/Z error and Euclidean location-error norm",
+      "input_artifacts": "sealed project_submission data and clean E5/E6/E7 evidence",
+      "location": {
+        "file": "exercise7_report_freeze.py",
+        "function_or_class": "plot_absolute_location_errors",
+        "line_end": 763,
+        "line_start": 738,
+        "source_sha256": "c5846b1a6d5ee03db41415983e52eda693a0244220c303f55235cea2ab73153f"
+      },
+      "output_artifacts": [
+        "loop_closure_clean_final/figures/absolute_location_errors.png"
+      ],
+      "purpose": "Exercise 7 absolute location errors",
+      "units": "m"
+    },
+    {
+      "formula_or_metric": "SO(3) geodesic absolute rotation error",
+      "input_artifacts": "sealed project_submission data and clean E5/E6/E7 evidence",
+      "location": {
+        "file": "exercise7_report_freeze.py",
+        "function_or_class": "plot_rotation_errors",
+        "line_end": 787,
+        "line_start": 766,
+        "source_sha256": "c5846b1a6d5ee03db41415983e52eda693a0244220c303f55235cea2ab73153f"
+      },
+      "output_artifacts": [
+        "loop_closure_clean_final/figures/absolute_rotation_errors.png"
+      ],
+      "purpose": "Exercise 7 absolute rotation errors",
+      "units": "deg"
+    },
+    {
+      "formula_or_metric": "sqrt(trace(raw Pose3 marginal translation block))",
+      "input_artifacts": "sealed project_submission data and clean E5/E6/E7 evidence",
+      "location": {
+        "file": "exercise7_report_freeze.py",
+        "function_or_class": "plot_location_uncertainty",
+        "line_end": 821,
+        "line_start": 790,
+        "source_sha256": "c5846b1a6d5ee03db41415983e52eda693a0244220c303f55235cea2ab73153f"
+      },
+      "output_artifacts": [
+        "loop_closure_clean_final/figures/location_uncertainty.png"
+      ],
+      "purpose": "Exercise 7 location uncertainty",
+      "units": "m"
+    },
+    {
+      "formula_or_metric": "sqrt(trace(raw Pose3 marginal rotation block))",
+      "input_artifacts": "sealed project_submission data and clean E5/E6/E7 evidence",
+      "location": {
+        "file": "exercise7_report_freeze.py",
+        "function_or_class": "plot_angular_uncertainty",
+        "line_end": 855,
+        "line_start": 824,
+        "source_sha256": "c5846b1a6d5ee03db41415983e52eda693a0244220c303f55235cea2ab73153f"
+      },
+      "output_artifacts": [
+        "loop_closure_clean_final/figures/angular_uncertainty.png"
+      ],
+      "purpose": "Exercise 7 angular uncertainty",
+      "units": "deg"
+    },
+    {
+      "formula_or_metric": "reciprocal matches, four-view consensus matches, supporters, and supporter percentage",
+      "input_artifacts": "sealed project_submission data and clean E5/E6/E7 evidence",
+      "location": {
+        "file": "exercise7_report_freeze.py",
+        "function_or_class": "plot_accepted_loop_statistics",
+        "line_end": 884,
+        "line_start": 858,
+        "source_sha256": "c5846b1a6d5ee03db41415983e52eda693a0244220c303f55235cea2ab73153f"
+      },
+      "output_artifacts": [
+        "loop_closure_clean_final/figures/accepted_loop_statistics.png",
+        "loop_closure_clean_final/data/accepted_loop_summary.csv"
+      ],
+      "purpose": "Exercise 7 accepted-loop statistics",
+      "units": "matches, supporters, %"
+    },
+    {
+      "formula_or_metric": "sealed consensus pixels and supporter mask",
+      "input_artifacts": "sealed project_submission data and clean E5/E6/E7 evidence",
+      "location": {
+        "file": "exercise7_report_freeze.py",
+        "function_or_class": "plot_emphasized_successful_match",
+        "line_end": 587,
+        "line_start": 497,
+        "source_sha256": "c5846b1a6d5ee03db41415983e52eda693a0244220c303f55235cea2ab73153f"
+      },
+      "output_artifacts": [
+        "loop_closure_clean_final/figures/first_accepted_successful_match_non_supporters_emphasized.png"
+      ],
+      "purpose": "Exercise 7 successful match",
+      "units": "px, matches, %"
+    },
+    {
+      "formula_or_metric": "top-down X-Z camera centers",
+      "input_artifacts": "sealed project_submission data and clean E5/E6/E7 evidence",
+      "location": {
+        "file": "exercise7_report_freeze.py",
+        "function_or_class": "_plot_trajectory",
+        "line_end": 735,
+        "line_start": 722,
+        "source_sha256": "c5846b1a6d5ee03db41415983e52eda693a0244220c303f55235cea2ab73153f"
+      },
+      "output_artifacts": [
+        "loop_closure_clean_final/figures/trajectory_all_stages.png",
+        "final_report/figures/system_trajectory_all_stages.png"
+      ],
+      "purpose": "All-stage trajectory",
+      "units": "m"
+    }
+  ],
+  "line_ranges_refreshed_after_final_source_edit": true,
+  "schema": "project-submission-final-code-locations-v1",
+  "scientific_stage_locations": [
+    {
+      "location": {
+        "file": "tools.py",
+        "function_or_class": "cv_triangulate_matched_points",
+        "line_end": 643,
+        "line_start": 619,
+        "source_sha256": "8067071552b81eb93b02289c7dbf61d06954ac054f8d3c0dd50a4d68865b4ec0"
+      },
+      "requirement_id": "CODE-01",
+      "stage": "Triangulation",
+      "status": "PASS"
+    },
+    {
+      "location": {
+        "file": "tools.py",
+        "function_or_class": "estimate_projection_matrices_with_ransac",
+        "line_end": 581,
+        "line_start": 505,
+        "source_sha256": "8067071552b81eb93b02289c7dbf61d06954ac054f8d3c0dd50a4d68865b4ec0"
+      },
+      "requirement_id": "CODE-02",
+      "stage": "RANSAC",
+      "status": "PASS"
+    },
+    {
+      "location": {
+        "file": "exercise4_database_builder.py",
+        "function_or_class": "build_exercise4_database",
+        "line_end": 986,
+        "line_start": 763,
+        "source_sha256": "0c3925b0a08589e96ea6eba16c0317e2e3c521927decb0b73e14e84ef07028a8"
+      },
+      "requirement_id": "CODE-03",
+      "stage": "PnP trajectory calculation",
+      "status": "PASS"
+    },
+    {
+      "location": {
+        "file": "tracking_database.py",
+        "function_or_class": "TrackingDB",
+        "line_end": 465,
+        "line_start": 74,
+        "source_sha256": "416dd86171b3835fa04246ff6eac0f0ee4b7134c910c6df4558e89aa036e203f"
+      },
+      "requirement_id": "CODE-04",
+      "stage": "DataBase definition",
+      "status": "PASS"
+    },
+    {
+      "location": {
+        "file": "tracking_database_adapter.py",
+        "function_or_class": "Exercise3TrackingDBAdapter.add_frame",
+        "line_end": 676,
+        "line_start": 620,
+        "source_sha256": "31090fb715c4c5654647bc9b401910487d9da6e4e17cc811e927d566c8f21d76"
+      },
+      "requirement_id": "CODE-05",
+      "stage": "Adding a frame to the data base",
+      "status": "PASS"
+    },
+    {
+      "location": {
+        "file": "exercise5_bundle_window.py",
+        "function_or_class": "solve_bundle_window",
+        "line_end": 1227,
+        "line_start": 870,
+        "source_sha256": "5acd1377b1d8cceb6c66ccc95afcd7319141aa870c1f52c80d4b8834667799df"
+      },
+      "requirement_id": "CODE-06",
+      "stage": "Single Bundle creation",
+      "status": "PASS"
+    },
+    {
+      "location": {
+        "file": "exercise5_full_run.py",
+        "function_or_class": "extract_endpoint_edge",
+        "line_end": 984,
+        "line_start": 932,
+        "source_sha256": "93d882e1c78bf281f8e89b929e46011191440faaed2b9da4473dbd4476f54a5f"
+      },
+      "requirement_id": "CODE-07A",
+      "stage": "Bundle endpoint relative transformation",
+      "status": "PASS"
+    },
+    {
+      "location": {
+        "file": "exercise5_full_run.py",
+        "function_or_class": "extract_endpoint_covariances",
+        "line_end": 733,
+        "line_start": 690,
+        "source_sha256": "93d882e1c78bf281f8e89b929e46011191440faaed2b9da4473dbd4476f54a5f"
+      },
+      "requirement_id": "CODE-07B",
+      "stage": "Bundle endpoint covariance extraction",
+      "status": "PASS"
+    },
+    {
+      "location": {
+        "file": "PoseGraph.py",
+        "function_or_class": "PoseGraph.create_factor_graph",
+        "line_end": 545,
+        "line_start": 471,
+        "source_sha256": "50a07029623b09544d4b4755e5de5cb093489eb41519055b40185ad8f7bd5ee8"
+      },
+      "requirement_id": "CODE-08",
+      "stage": "Pose Graph building",
+      "status": "PASS"
+    },
+    {
+      "location": {
+        "file": "exercise7_candidate_detection.py",
+        "function_or_class": "CovarianceGraph.find_course_covariance_path",
+        "line_end": 771,
+        "line_start": 643,
+        "source_sha256": "10b6e2b8ec25fd93eac2bfe2f689fe5c704b297fc0cdfa27ae55ee10193e1a47"
+      },
+      "requirement_id": "CODE-09A",
+      "stage": "Loop Closure candidate detection",
+      "status": "PASS"
+    },
+    {
+      "location": {
+        "file": "exercise7_pose_graph_update.py",
+        "function_or_class": "CumulativePoseGraphState.apply_loop_factor",
+        "line_end": 224,
+        "line_start": 180,
+        "source_sha256": "3793c6664da7d5968a68daea13354a6255d8140fb08acc8925406faac2614fde"
+      },
+      "requirement_id": "CODE-09B",
+      "stage": "Loop Closure factor creation/update",
+      "status": "PASS"
+    }
+  ],
+  "status": "PASS"
+}

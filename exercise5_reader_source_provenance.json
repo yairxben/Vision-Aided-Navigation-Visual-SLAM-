@@ -1,0 +1,90 @@
+{
+  "canonical_run_configuration": {
+    "path": "exercise5_production_config.json",
+    "sha256": "34d60fc57b8e6d7fca8b78807c81a2f971608bed4b5cdb91eb76495e2eac1d6c"
+  },
+  "files": {
+    "ex5.py": {
+      "change_class": "documentation-only",
+      "executable_equivalence": {
+        "method": "normalized-ast-equality-after-docstring-removal",
+        "status": "proven"
+      },
+      "predecessor_identity": "pre-documentation-source",
+      "predecessor_sha256": "855f6d39f09748bef68a58e7a5cd43ad88522362e79b0e5d28bbca14e557abb4",
+      "reader_source_sha256": "e834ea71c6c9955ecf47a36439adc1a2bae7445c1710c5075a54d60d13e6e860"
+    },
+    "exercise5_aggregation.py": {
+      "change_class": "documentation-only",
+      "executable_equivalence": {
+        "method": "normalized-ast-equality-after-docstring-removal",
+        "status": "proven"
+      },
+      "predecessor_identity": "pre-documentation-source",
+      "predecessor_sha256": "1b0d7a97592dfc4636abf1d5be4436d392f4b14c15f878abc46066930478e1fd",
+      "reader_source_sha256": "b9966bf9494e38b38c2d3c4be30e016aa6467bdfd0d43eb2e3252d27451a8f3d"
+    },
+    "exercise5_artifacts.py": {
+      "change_class": "documentation-only",
+      "executable_equivalence": {
+        "method": "normalized-ast-equality-after-docstring-removal",
+        "status": "proven"
+      },
+      "predecessor_identity": "canonical-run-source-contract",
+      "predecessor_sha256": "6149e1120745da06eb2bcacc56005b00b13a168c464f79767c971418b79d68bb",
+      "reader_source_sha256": "88e3c9181ea5f82e6b4bd23f9a02297b9804fc7e23b58c629dd62fe5c6690b5f"
+    },
+    "exercise5_bundle_window.py": {
+      "change_class": "documentation-only",
+      "executable_equivalence": {
+        "method": "normalized-ast-equality-after-docstring-removal",
+        "status": "proven"
+      },
+      "predecessor_identity": "canonical-run-source-contract",
+      "predecessor_sha256": "59a19455c6b3d5f5e187fca8aecd4541aebabf3a843714940e21dd07dbd0ed65",
+      "reader_source_sha256": "5acd1377b1d8cceb6c66ccc95afcd7319141aa870c1f52c80d4b8834667799df"
+    },
+    "exercise5_full_run.py": {
+      "change_class": "documentation-plus-provenance-validation",
+      "executable_equivalence": {
+        "method": "narrow-source-identity-validation-change",
+        "status": "reviewed-separately"
+      },
+      "predecessor_identity": "canonical-run-source-contract",
+      "predecessor_sha256": "3ab6b4e20c8c348521f739f495cd1b8586ee534b294b63a71c77ae957ec9fa56",
+      "reader_source_sha256": "93d882e1c78bf281f8e89b929e46011191440faaed2b9da4473dbd4476f54a5f"
+    },
+    "exercise5_reporting.py": {
+      "change_class": "documentation-only",
+      "executable_equivalence": {
+        "method": "normalized-ast-equality-after-docstring-removal",
+        "status": "proven"
+      },
+      "predecessor_identity": "accepted-post-run-pre-documentation-source",
+      "predecessor_sha256": "0a2a68dd9a5f2ca761d2be1fd9b0cff0faa429013c1a3593fe3c8a21f825a0aa",
+      "reader_source_sha256": "bb80579c454408d332e7c83a917069d105718040bc19133d246ccf55c0f9e7b8"
+    },
+    "exercise5_submission.py": {
+      "change_class": "documentation-only",
+      "executable_equivalence": {
+        "method": "normalized-ast-equality-after-docstring-removal",
+        "status": "proven"
+      },
+      "predecessor_identity": "accepted-post-run-pre-documentation-source",
+      "predecessor_sha256": "b1a1fbc820b4ac653ced490267d7b9c169fe48451a955ee7cd5a634f1c5fef59",
+      "reader_source_sha256": "5cd884c80e0476812bc5d326ac7e133383b605b45fb4e569b0d25704b8beb5ef"
+    }
+  },
+  "historical_artifacts": {
+    "canonical_run_root": "diagnostics/ex5_clean_final",
+    "identity_statement": "The canonical artifacts were generated from the predecessor source identity. The current source is a documentation-only executable-equivalent successor except for the separately reviewed source-validation bookkeeping in exercise5_full_run.py.",
+    "rewrite_performed": false
+  },
+  "schema": "exercise5-reader-source-provenance-v1",
+  "schema_version": 1,
+  "status": "accepted-reader-source",
+  "unchanged_canonical_run_sources": {
+    "exercise5_geometry.py": "5502e71ff256cd8b25adb58786974df69afa309d68222de5bd749fa1b14fb6c8",
+    "validate_ex5_single_window.py": "d396605f5156a1da254155a0a0e00c7a051b9a6b333925093a05958885accc1a"
+  }
+}

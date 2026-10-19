@@ -1,0 +1,5 @@
+# Python runtime: 3.8.19
+gtsam==4.2
+matplotlib==3.7.5
+numpy==1.24.4
+opencv-python==4.10.0.84

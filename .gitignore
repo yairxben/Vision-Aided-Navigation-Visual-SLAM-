@@ -1,0 +1,16 @@
+# Python
+__pycache__/
+*.py[cod]
+.venv/
+venv/
+
+# IDE
+.idea/
+.vscode/
+
+# Local dataset and generated diagnostics
+dataset/
+diagnostics/
+
+# Local Claude Code settings
+.claude/
