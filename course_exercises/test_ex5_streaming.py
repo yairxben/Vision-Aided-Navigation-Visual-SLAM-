@@ -9,6 +9,7 @@ import inspect
 import json
 import os
 import subprocess
+import sys
 import tempfile
 import types
 import unittest
@@ -1173,7 +1174,7 @@ class StreamingSyntheticContractTest(unittest.TestCase):
 
     def test_ex5_help_and_canonical_command_safety(self):
         help_result = subprocess.run(
-            [str(ROOT / ".venv" / "bin" / "python"), "ex5.py"],
+            [sys.executable, "ex5.py"],
             cwd=str(ROOT),
             text=True,
             stdout=subprocess.PIPE,
@@ -1186,7 +1187,7 @@ class StreamingSyntheticContractTest(unittest.TestCase):
         self.assertIn("submission", help_result.stdout)
         unsafe = subprocess.run(
             [
-                str(ROOT / ".venv" / "bin" / "python"),
+                sys.executable,
                 "ex5.py",
                 "run",
                 "--output-root",

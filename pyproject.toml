@@ -1,0 +1,23 @@
+[build-system]
+requires = ["setuptools>=61"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "generic-slam"
+version = "0.1.0"
+description = "Sequence-generic KITTI stereo visual SLAM pipeline"
+readme = "README.md"
+requires-python = ">=3.8"
+# Exact pins for a reproducible environment live in requirements.txt.
+dependencies = [
+    "gtsam>=4.2",
+    "matplotlib",
+    "numpy",
+    "opencv-python",
+]
+
+[project.scripts]
+generic-slam = "generic_slam.cli:main"
+
+[tool.setuptools.packages.find]
+include = ["generic_slam*"]

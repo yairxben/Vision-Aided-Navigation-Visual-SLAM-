@@ -1,8 +1,8 @@
 """Sequence-generic KITTI stereo SLAM pipeline.
 
-The package is intentionally independent of the historical exercise-oriented
-entrypoints.  The lecturer TrackingDB is the sole shared implementation
-component and is wrapped under :mod:`generic_slam.tracking`.
+The package is fully independent of the frozen course code in
+``course_exercises/``.  The lecturer TrackingDB is vendored and wrapped under
+:mod:`generic_slam.tracking`.
 """
 
 from .config import AlgorithmConfig, resolve_algorithm_config

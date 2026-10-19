@@ -10,13 +10,35 @@ The project is evaluated on **KITTI Odometry Sequence 00** and uses **OpenCV** f
 
 ---
 
+## Repository Layout
+
+```text
+SLAM/
+├── run_slam.py         # entry point for the generic pipeline
+├── pyproject.toml      # makes generic_slam installable
+├── generic_slam/       # living, sequence-independent SLAM engine
+└── course_exercises/   # frozen course submission (self-contained)
+```
+
+`generic_slam/` is where development and optimization happen. It has no dependency on `course_exercises/`.
+
+```bash
+pip install -r requirements.txt
+pip install -e .        # optional: import/run generic_slam from any directory
+python run_slam.py --dataset-root <kitti-root> --sequence 00 --output-root outputs/seq00
+```
+
+`course_exercises/` is the frozen course code. Its files are byte-identical to the submitted versions, so recorded source hashes stay valid. Run its scripts and tests from inside that folder (for example `cd course_exercises && python ex7.py`). It expects `dataset/` and `diagnostics/` inside `course_exercises/`.
+
+---
+
 ## Code Structure
 
-The repository keeps the course exercise entry points at the project root (`ex3.py`–`ex7.py`). Larger stages are split into focused modules so that the scientific pipeline, workflow orchestration, analysis, and reporting remain distinguishable.
+All files described in this section live in `course_exercises/`. Larger stages are split into focused modules so that the scientific pipeline, workflow orchestration, analysis, and reporting remain distinguishable.
 
 The diagrams below show the main canonical execution and reading flow rather than an exhaustive Python import tree. Tests, validators, and retained historical or experimental helpers are omitted for clarity.
 
-Detailed reader guides for Exercises 4–7 are available under `docs/`.
+Detailed reader guides for Exercises 4–7 are available under `course_exercises/docs/`.
 
 ### Exercise 3 — Stereo Visual Odometry
 
@@ -200,4 +222,4 @@ The final canonical pipeline uses:
 
 ### Generic SLAM Pipeline
 
-`generic_slam/` is a sequence-independent refactor of the original SLAM pipeline, designed to run the same stages on different KITTI odometry sequences. It was additionally tested on KITTI sequence 05.
+`generic_slam/` is a sequence-independent refactor of the original SLAM pipeline, designed to run the same stages on different KITTI odometry sequences. It was additionally tested on KITTI sequence 05. It carries its own copy of the lecturer `TrackingDB` (`generic_slam/tracking/tracking_database.py`) and is fully independent of the course code.
