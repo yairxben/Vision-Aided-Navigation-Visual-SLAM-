@@ -10,8 +10,9 @@ venv/
 .idea/
 .vscode/
 
-# Local dataset and generated diagnostics
-dataset/
+# Local KITTI data (anchored so the generic_slam/dataset package is tracked)
+/dataset/
+/course_exercises/dataset
 diagnostics/
 
 # Local Claude Code settings
