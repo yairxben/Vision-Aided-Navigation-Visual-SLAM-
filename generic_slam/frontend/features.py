@@ -1,4 +1,4 @@
-"""Validated SIFT/FLANN extraction and descriptor correspondence policy."""
+"""Configurable AKAZE/SIFT extraction and descriptor correspondence policy."""
 
 from __future__ import annotations
 
@@ -13,7 +13,7 @@ from ..contracts import ContractError
 
 @dataclass(frozen=True)
 class ImageFeatures:
-    """One image's SIFT keypoints and descriptors."""
+    """One image's keypoints and descriptors."""
 
     keypoints: Tuple[cv2.KeyPoint, ...]
     descriptors: np.ndarray
@@ -35,24 +35,38 @@ class StereoFeatures:
 
 def _require_descriptors(descriptors: Optional[np.ndarray], label: str) -> np.ndarray:
     if descriptors is None:
-        raise ContractError("SIFT produced no descriptors for {}".format(label))
+        raise ContractError("feature detector produced no descriptors for {}".format(label))
     value = np.asarray(descriptors)
     if value.ndim != 2 or value.shape[0] == 0 or not np.all(np.isfinite(value)):
-        raise ContractError("invalid SIFT descriptors for {}".format(label))
+        raise ContractError("invalid feature descriptors for {}".format(label))
     return value
 
 
-class FeatureFrontend:
-    """Stage-scoped detector and matcher with the protected numerical settings."""
+def create_detector(frontend_config: Mapping[str, object]) -> cv2.Feature2D:
+    """Build the configured detector/descriptor extractor."""
 
-    def __init__(self, frontend_config: Mapping[str, object]) -> None:
+    detector = frontend_config["detector"]
+    if detector == "akaze":
+        return cv2.AKAZE_create(
+            threshold=float(frontend_config["akaze"]["threshold"])
+        )
+    if detector == "sift":
         sift = frontend_config["sift"]
-        flann = frontend_config["flann"]
-        stereo = frontend_config["stereo"]
-        self._detector = cv2.SIFT_create(
+        return cv2.SIFT_create(
             contrastThreshold=float(sift["contrast_threshold"]),
             edgeThreshold=float(sift["edge_threshold"]),
         )
+    raise ContractError("unsupported frontend.detector: {}".format(detector))
+
+
+class FeatureFrontend:
+    """Stage-scoped detector and matcher with the configured numerical settings."""
+
+    def __init__(self, frontend_config: Mapping[str, object]) -> None:
+        flann = frontend_config["flann"]
+        stereo = frontend_config["stereo"]
+        self.detector_type = str(frontend_config["detector"])
+        self._detector = create_detector(frontend_config)
         self._index_parameters = {
             "algorithm": int(flann["algorithm"]),
             "trees": int(flann["trees"]),
@@ -65,9 +79,16 @@ class FeatureFrontend:
             stereo["require_positive_disparity"]
         )
 
-    def create_matcher(self) -> cv2.FlannBasedMatcher:
-        """Create an independent matcher with the configured exact policy."""
+    def create_matcher(self) -> cv2.DescriptorMatcher:
+        """Create an independent matcher whose norm fits the descriptor type.
 
+        AKAZE descriptors are binary, so they use exact Hamming brute force
+        (a FLANN KD-tree index only supports float descriptors). SIFT keeps
+        the configured FLANN KD-tree with the L2 norm.
+        """
+
+        if self.detector_type == "akaze":
+            return cv2.BFMatcher(cv2.NORM_HAMMING, crossCheck=False)
         return cv2.FlannBasedMatcher(
             dict(self._index_parameters), dict(self._search_parameters)
         )

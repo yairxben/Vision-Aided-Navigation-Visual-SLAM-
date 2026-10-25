@@ -19,10 +19,19 @@ def tracking_analysis_rows(tracking_root: Path):
         u_right = observations["u_right_px"].copy()
         v_mean = observations["v_mean_px"].copy()
     frame_counts = dict(zip(*np.unique(observation_frame_ids, return_counts=True)))
+    # A track observed in frame f "continues" if the same track is also
+    # observed in frame f + 1.
+    stride = int(population.max()) + 2 if len(population) else 1
+    keys = observation_track_ids.astype(np.int64) * stride + observation_frame_ids
+    continues = np.isin(keys + 1, keys)
+    continuing_counts = dict(
+        zip(*np.unique(observation_frame_ids[continues], return_counts=True))
+    )
     frame_rows = [
         {
             "frame_id": int(frame_id),
             "tracked_link_count": int(frame_counts.get(frame_id, 0)),
+            "tracks_continuing_to_next_frame": int(continuing_counts.get(frame_id, 0)),
         }
         for frame_id in population
     ]
@@ -91,4 +100,46 @@ def tracking_analysis_rows(tracking_root: Path):
     return frame_rows, track_rows, transition_rows, reprojection_rows, representative_rows
 
 
-__all__ = ["tracking_analysis_rows"]
+def summarize_tracking(frame_rows, track_rows, transition_rows):
+    """Summary statistics of the TrackingDB and the per-transition match funnel."""
+
+    lengths = np.asarray([int(row["track_length_frames"]) for row in track_rows], dtype=float)
+    links = np.asarray([int(row["tracked_link_count"]) for row in frame_rows], dtype=float)
+    # The final frame has no following frame, so it is excluded.
+    continuing = np.asarray(
+        [int(row["tracks_continuing_to_next_frame"]) for row in frame_rows[:-1]], dtype=float
+    )
+    stereo = np.asarray([float(row["current_stereo_row_count"]) for row in transition_rows])
+    consensus = np.asarray([float(row["consensus_count"]) for row in transition_rows])
+    supporters = np.asarray([float(row["supporter_count"]) for row in transition_rows])
+    percentage = np.asarray([float(row["supporter_percentage"]) for row in transition_rows])
+
+    def _mean(values):
+        return float(np.mean(values)) if len(values) else None
+
+    return {
+        "frame_count": len(frame_rows),
+        "track_count": len(track_rows),
+        "track_length_frames": {
+            "mean": _mean(lengths),
+            "median": float(np.median(lengths)) if len(lengths) else None,
+            "maximum": int(lengths.max()) if len(lengths) else None,
+        },
+        "tracks_with_length_at_least": {
+            str(minimum): int(np.sum(lengths >= minimum)) for minimum in (2, 3, 5, 10, 20)
+        },
+        "mean_tracked_links_per_frame": _mean(links),
+        "mean_tracks_continuing_to_next_frame": _mean(continuing),
+        "minimum_tracks_continuing_to_next_frame": (
+            int(continuing.min()) if len(continuing) else None
+        ),
+        "per_transition_means": {
+            "stereo_matches": _mean(stereo),
+            "four_view_consensus": _mean(consensus),
+            "pnp_ransac_supporters": _mean(supporters),
+            "supporter_percentage_of_consensus": _mean(percentage),
+        },
+    }
+
+
+__all__ = ["summarize_tracking", "tracking_analysis_rows"]

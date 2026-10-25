@@ -38,7 +38,7 @@ from ..dataset.kitti import KittiStereoSequence
 from .bundle import bundle_window_rows
 from .loop_closure import loop_summary
 from .pose_graph import uncertainty_rows
-from .tracking import tracking_analysis_rows
+from .tracking import summarize_tracking, tracking_analysis_rows
 from .trajectories import (
     absolute_error_rows,
     camera_to_world_from_extrinsics,
@@ -78,9 +78,11 @@ ANALYSIS_PRIMARY_ARTIFACTS = (
     "cross_stage/keyframe_trajectories.csv",
     "cross_stage/absolute_errors.csv",
     "cross_stage/consecutive_relative_errors.csv",
+    "cross_stage/keyframe_relative_errors.csv",
+    "tracking/track_statistics.json",
 )
 
-FRAME_LINK_FIELDS = ("frame_id", "tracked_link_count")
+FRAME_LINK_FIELDS = ("frame_id", "tracked_link_count", "tracks_continuing_to_next_frame")
 TRACK_LENGTH_FIELDS = (
     "track_id", "track_length_frames", "first_frame_id", "last_frame_id",
 )
@@ -112,6 +114,7 @@ TRAJECTORY_FIELDS = (
 ABSOLUTE_FIELDS = (
     "stage", "frame_id", "translation_error_m", "rotation_error_deg",
     "x_error_m", "y_error_m", "z_error_m",
+    "x_signed_error_m", "y_signed_error_m", "z_signed_error_m",
 )
 RELATIVE_FIELDS = (
     "stage", "start_frame_id", "end_frame_id", "translation_error_m",
@@ -290,6 +293,8 @@ def run_analysis_stage(
             representative_rows,
             REPRESENTATIVE_TRACK_FIELDS,
         )
+        tracking_summary = summarize_tracking(frame_rows, track_rows, transition_rows)
+        write_json_atomic(attempt / "tracking" / "track_statistics.json", tracking_summary)
 
         window_rows = bundle_window_rows(root.parent / "bundle")
         write_csv_atomic(attempt / "bundle" / "window_metrics.csv", window_rows, BUNDLE_FIELDS)
@@ -406,6 +411,7 @@ def run_analysis_stage(
 
         absolute_rows = []
         relative_rows = []
+        keyframe_relative_rows = []
         subsection_by_length = {
             int(length): []
             for length in config.section("analysis")["relative_subsection_lengths_frames"]
@@ -435,6 +441,23 @@ def run_analysis_stage(
                 }
                 for length, rows in subsection_by_length.items():
                     rows.extend(subsection_error_rows(ids, poses, truth, stage, length))
+            # Same keyframe pairs for every stage, so accumulated PnP is
+            # directly comparable with Bundle Adjustment.
+            keyframe_truth = normalize_camera_to_world(gt_camera_to_world[keyframe_ids])
+            for stage, poses in (
+                ("pnp_accumulated", keyframe_poses["pnp"]),
+                ("bundle", keyframe_poses["bundle"]),
+            ):
+                stage_rows = relative_error_rows(keyframe_ids, poses, keyframe_truth, stage)
+                keyframe_relative_rows.extend(stage_rows)
+                metric_summary.setdefault("keyframe_relative", {})[stage] = _finite_summary(
+                    stage_rows, "translation_error_m", "rotation_error_deg"
+                )
+        write_csv_atomic(
+            attempt / "cross_stage" / "keyframe_relative_errors.csv",
+            keyframe_relative_rows,
+            RELATIVE_FIELDS,
+        )
         write_csv_atomic(
             attempt / "cross_stage" / "absolute_errors.csv", absolute_rows, ABSOLUTE_FIELDS
         )
@@ -494,7 +517,13 @@ def run_analysis_stage(
                         < int(config.section("analysis")["low_connectivity_threshold"])
                         for row in frame_rows
                     ),
+                    "median_track_length_frames": tracking_summary["track_length_frames"]["median"],
+                    "mean_tracks_continuing_to_next_frame": tracking_summary[
+                        "mean_tracks_continuing_to_next_frame"
+                    ],
+                    "tracks_with_length_at_least": tracking_summary["tracks_with_length_at_least"],
                 },
+                "matching_funnel_means": tracking_summary["per_transition_means"],
                 "bundle_window_count": len(window_rows),
                 "bundle_rejection_reason_counts": dict(sorted(Counter(
                     row["reason"] for row in rejection_rows
@@ -542,12 +571,14 @@ def _save_figure(path: Path, figure) -> None:
     plt.close(figure)
 
 
-def _plot_lines(path: Path, x, series, title: str, ylabel: str) -> None:
+def _plot_lines(
+    path: Path, x, series, title: str, ylabel: str, xlabel: str = "FrameId / ordinal"
+) -> None:
     figure, axis = plt.subplots(figsize=(9, 4.8))
     for label, values in series:
         axis.plot(x[: len(values)], values, label=label, linewidth=1.2)
     axis.set_title(title)
-    axis.set_xlabel("FrameId / ordinal")
+    axis.set_xlabel(xlabel)
     axis.set_ylabel(ylabel)
     axis.grid(True, alpha=0.25)
     if len(series) > 1:
@@ -607,6 +638,126 @@ def _plot_raw_covariance_trajectory(
     _save_figure(path, figure)
 
 
+def _format_number(value, digits: int = 2) -> str:
+    if value is None:
+        return "n/a"
+    if isinstance(value, int):
+        return "{:,}".format(value)
+    return "{:,.{}f}".format(float(value), digits)
+
+
+def _summary_markdown(
+    analysis_root: Path, output_root: Path, config: AlgorithmConfig, generated
+) -> str:
+    """Human-readable run summary: tracks, matching funnel, errors, timing."""
+
+    summary = read_json(Path(analysis_root) / "summary.json")
+    tracks = read_json(Path(analysis_root) / "tracking" / "track_statistics.json")
+    frontend = config.section("frontend")
+    detector = frontend["detector"]
+    detector_setting = (
+        "threshold {}".format(frontend["akaze"]["threshold"]) if detector == "akaze"
+        else "contrast threshold {}".format(frontend["sift"]["contrast_threshold"])
+    )
+    lines = [
+        "# SLAM run summary",
+        "",
+        "- Sequence frames: {} | keyframes: {} | Bundle windows: {}".format(
+            summary["frame_count"], summary["keyframe_count"], summary["bundle_window_count"]
+        ),
+        "- Feature detector: {} ({}) | config mode: {}".format(
+            detector, detector_setting, config.mode
+        ),
+        "- Accepted Loop Closures: {}".format(summary["accepted_loop_count"]),
+        "",
+        "## Tracking statistics",
+        "",
+        "| Statistic | Value |",
+        "|---|---|",
+        "| Tracks | {} |".format(_format_number(tracks["track_count"])),
+        "| Mean / median / max track length [frames] | {} / {} / {} |".format(
+            _format_number(tracks["track_length_frames"]["mean"]),
+            _format_number(tracks["track_length_frames"]["median"], 1),
+            _format_number(tracks["track_length_frames"]["maximum"]),
+        ),
+        "| Mean tracked links per frame | {} |".format(
+            _format_number(tracks["mean_tracked_links_per_frame"], 1)
+        ),
+        "| Mean / min tracks continuing to next frame | {} / {} |".format(
+            _format_number(tracks["mean_tracks_continuing_to_next_frame"], 1),
+            _format_number(tracks["minimum_tracks_continuing_to_next_frame"]),
+        ),
+    ]
+    # JSON stores the keys as sorted strings; present them in numeric order.
+    for minimum, count in sorted(
+        tracks["tracks_with_length_at_least"].items(), key=lambda item: int(item[0])
+    ):
+        lines.append("| Tracks with length >= {} frames | {} |".format(minimum, _format_number(count)))
+    funnel = tracks["per_transition_means"]
+    lines += [
+        "",
+        "## Matching funnel (mean per consecutive-frame transition)",
+        "",
+        "| Stage | Mean matches |",
+        "|---|---|",
+        "| Stereo matches (geometric row/disparity check) | {} |".format(
+            _format_number(funnel["stereo_matches"], 1)
+        ),
+        "| Four-view consensus | {} |".format(_format_number(funnel["four_view_consensus"], 1)),
+        "| PnP/RANSAC supporters | {} |".format(_format_number(funnel["pnp_ransac_supporters"], 1)),
+        "| Supporters as % of consensus | {} % |".format(
+            _format_number(funnel["supporter_percentage_of_consensus"], 1)
+        ),
+    ]
+    metrics = summary.get("trajectory_error_metrics", {})
+    if metrics:
+        lines += [
+            "",
+            "## Absolute trajectory error vs Ground Truth",
+            "",
+            "| Trajectory | Mean [m] | RMSE [m] | Max [m] | Final [m] | Rotation RMSE [deg] |",
+            "|---|---|---|---|---|---|",
+        ]
+        for stage in ("pnp", "bundle", "pose_graph_without_loop", "pose_graph_with_loop"):
+            absolute = metrics.get(stage, {}).get("absolute", {})
+            if absolute:
+                lines.append("| {} | {} | {} | {} | {} | {} |".format(
+                    stage.replace("_", " "),
+                    _format_number(absolute["translation_mean_m"]),
+                    _format_number(absolute["translation_rmse_m"]),
+                    _format_number(absolute["translation_maximum_m"]),
+                    _format_number(absolute["translation_final_m"]),
+                    _format_number(absolute["rotation_rmse_deg"]),
+                ))
+        keyframe_relative = metrics.get("keyframe_relative", {})
+        if keyframe_relative:
+            lines += [
+                "",
+                "## Relative error between consecutive keyframes",
+                "",
+                "| Estimate | Mean translation [m] | RMSE translation [m] | Mean rotation [deg] |",
+                "|---|---|---|---|",
+            ]
+            for stage, label in (("pnp_accumulated", "accumulated PnP"), ("bundle", "Bundle Adjustment")):
+                values = keyframe_relative.get(stage, {})
+                if values:
+                    lines.append("| {} | {} | {} | {} |".format(
+                        label,
+                        _format_number(values["translation_mean_m"], 3),
+                        _format_number(values["translation_rmse_m"], 3),
+                        _format_number(values["rotation_mean_deg"], 3),
+                    ))
+    lines += ["", "## Stage runtime", "", "| Stage | Minutes |", "|---|---|"]
+    for stage in ("tracking", "keyframes", "bundle", "pose_graph", "loop_closure", "analysis"):
+        manifest_path = Path(output_root) / stage / "manifest.json"
+        if manifest_path.is_file():
+            minutes = load_stage_manifest(manifest_path).runtime_seconds / 60.0
+            lines.append("| {} | {} |".format(stage, _format_number(minutes, 1)))
+    lines += ["", "## Figures", ""]
+    lines += ["- [{0}]({0})".format(relative) for relative in generated]
+    return "\n".join(lines) + "\n"
+
+
 def _read_float(rows, name: str) -> np.ndarray:
     return np.asarray([float(row[name]) for row in rows], dtype=float)
 
@@ -664,6 +815,14 @@ def run_report_stage(
             [("tracked links", _read_float(frame_rows, "tracked_link_count"))],
             "Tracking connectivity", "Tracked links",
         )
+        # The final frame has no following frame.
+        _plot_lines(
+            figure_path("tracks_continuing_to_next_frame.png"),
+            _read_float(frame_rows[:-1], "frame_id"),
+            [("tracks", _read_float(frame_rows[:-1], "tracks_continuing_to_next_frame"))],
+            "Feature tracks in each frame that remain connected to the following frame",
+            "Tracks", xlabel="FrameId",
+        )
         lengths = _read_float(track_rows, "track_length_frames")
         figure, axis = plt.subplots(figsize=(8, 4.8))
         axis.hist(lengths, bins=min(60, max(1, len(np.unique(lengths)))))
@@ -700,10 +859,24 @@ def run_report_stage(
             ],
             "Temporal consensus and PnP supporters", "Matches",
         )
+        # Each transition is labelled by its current FrameId.
+        current_frame_x = _read_float(transition_rows, "current_frame_id")
         _plot_lines(
-            figure_path("supporter_rate.png"), transition_x,
+            figure_path("matching_stages.png"), current_frame_x,
+            [
+                ("stereo matches (current frame)",
+                 _read_float(transition_rows, "current_stereo_row_count")),
+                ("four-view consensus", _read_float(transition_rows, "consensus_count")),
+                ("PnP/RANSAC supporters", _read_float(transition_rows, "supporter_count")),
+            ],
+            "Matching stages for each consecutive-frame transition",
+            "Matches", xlabel="Current FrameId",
+        )
+        _plot_lines(
+            figure_path("supporter_rate.png"), current_frame_x,
             [("supporter percentage", _read_float(transition_rows, "supporter_percentage"))],
-            "PnP supporter rate", "Supporters [%]",
+            "Four-view consensus matches accepted as PnP/RANSAC supporters",
+            "Supporters [% of consensus]", xlabel="Current FrameId",
         )
         _plot_lines(
             figure_path("tracking_reprojection.png"), transition_x,
@@ -1013,6 +1186,27 @@ def run_report_stage(
             axis.grid(True, alpha=0.25)
             axis.legend()
             _save_figure(figure_path("absolute_axis_errors.png"), figure)
+            pnp_absolute = [row for row in absolute if row["stage"] == "pnp"]
+            figure, axis = plt.subplots(figsize=(9, 4.8))
+            for component, label in (
+                ("x_signed_error_m", "X"), ("y_signed_error_m", "Y"), ("z_signed_error_m", "Z"),
+            ):
+                axis.plot(
+                    _read_float(pnp_absolute, "frame_id"),
+                    _read_float(pnp_absolute, component), label=label, linewidth=1.1,
+                )
+            axis.plot(
+                _read_float(pnp_absolute, "frame_id"),
+                _read_float(pnp_absolute, "translation_error_m"),
+                color="black", label="norm", linewidth=1.4,
+            )
+            axis.axhline(0.0, color="grey", linewidth=0.6)
+            axis.set_title("Absolute PnP position error relative to Ground Truth")
+            axis.set_xlabel("FrameId")
+            axis.set_ylabel("Position error [m] (estimate - truth)")
+            axis.grid(True, alpha=0.25)
+            axis.legend()
+            _save_figure(figure_path("pnp_absolute_position_errors.png"), figure)
             ground_truth_positions = trajectories["ground_truth_pose_matrices"][:, :3, 3]
             path_distance = np.concatenate((
                 [0.0], np.cumsum(np.linalg.norm(np.diff(ground_truth_positions, axis=0), axis=1))
@@ -1038,16 +1232,37 @@ def run_report_stage(
                 ("translation_error_m", "relative_translation_error.png", "Relative translation error [m]"),
                 ("rotation_error_deg", "relative_rotation_error.png", "Relative rotation error [deg]"),
             ):
+                # PnP transitions span one frame and keyframe stages span a
+                # whole window, so plot by end FrameId rather than ordinal.
                 figure, axis = plt.subplots(figsize=(9, 4.8))
                 for stage in stages:
                     selected = [row for row in relative if row["stage"] == stage]
-                    axis.plot(np.arange(len(selected)), _read_float(selected, metric), label=stage.replace("_", " "))
-                axis.set_title(ylabel)
-                axis.set_xlabel("Transition ordinal")
+                    axis.plot(
+                        _read_float(selected, "end_frame_id"), _read_float(selected, metric),
+                        label=stage.replace("_", " "),
+                    )
+                axis.set_title(ylabel + " per stage transition (PnP: frame, others: keyframe)")
+                axis.set_xlabel("End FrameId")
                 axis.set_ylabel(ylabel)
                 axis.grid(True, alpha=0.25)
                 axis.legend()
                 _save_figure(figure_path(filename), figure)
+            keyframe_relative = _csv_rows(
+                Path(analysis_root) / "cross_stage" / "keyframe_relative_errors.csv"
+            )
+            figure, axis = plt.subplots(figsize=(9, 4.8))
+            for stage, label in (("pnp_accumulated", "accumulated PnP"), ("bundle", "Bundle Adjustment")):
+                selected = [row for row in keyframe_relative if row["stage"] == stage]
+                axis.plot(
+                    _read_float(selected, "end_frame_id"),
+                    _read_float(selected, "translation_error_m"), label=label, linewidth=1.1,
+                )
+            axis.set_title("Relative translation error between consecutive keyframes")
+            axis.set_xlabel("End keyframe FrameId")
+            axis.set_ylabel("Relative translation error [m]")
+            axis.grid(True, alpha=0.25)
+            axis.legend()
+            _save_figure(figure_path("keyframe_relative_translation_error.png"), figure)
             for length in config.section("analysis")["relative_subsection_lengths_frames"]:
                 rows = _csv_rows(
                     Path(analysis_root) / "cross_stage" / "relative_subsections_{}.csv".format(length)
@@ -1073,6 +1288,10 @@ def run_report_stage(
                 "reason": "Ground Truth is absent for this sequence",
             })
 
+        (attempt / "summary.md").write_text(
+            _summary_markdown(analysis_root, root.parent, config, generated),
+            encoding="utf-8",
+        )
         write_json_atomic(
             attempt / "summary.json",
             {
@@ -1092,7 +1311,7 @@ def run_report_stage(
                 "figure_count": len(generated),
                 "skipped_figure_count": len(skipped),
             },
-            primary_artifacts=("summary.json",) + tuple(generated),
+            primary_artifacts=("summary.json", "summary.md") + tuple(generated),
             runtime_seconds=time.perf_counter() - started,
             peak_rss_bytes=_peak_rss_bytes(),
         )

@@ -195,11 +195,19 @@ def solve_small_bundle(
                 previous_camera.backproject(gtsam.StereoPoint2(*observation.previous_measurement)),
                 dtype=float,
             ).reshape(3)
+            # Depth of the current observation in its own camera; both
+            # observations must be within the limit, as in the window Bundle.
+            current_own_depth = float(np.asarray(
+                previous_camera.backproject(gtsam.StereoPoint2(*observation.current_measurement)),
+                dtype=float,
+            ).reshape(3)[2])
             if not np.all(np.isfinite(point)):
                 reason = "no_finite_backprojection"
             elif point[2] <= 0.0:
                 reason = "no_all_camera_positive_depth_initialization"
-            elif point[2] >= maximum_depth:
+            elif point[2] >= maximum_depth or (
+                np.isfinite(current_own_depth) and current_own_depth >= maximum_depth
+            ):
                 reason = "excessive_initialization_depth"
             else:
                 current_point = np.asarray(initial_relative_pose.transformTo(point), dtype=float)

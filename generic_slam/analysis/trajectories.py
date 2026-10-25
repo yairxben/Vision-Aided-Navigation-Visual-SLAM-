@@ -54,6 +54,10 @@ def absolute_error_rows(
                 "x_error_m": float(abs(components[0])),
                 "y_error_m": float(abs(components[1])),
                 "z_error_m": float(abs(components[2])),
+                # Signed estimate - truth, in the first-camera world frame.
+                "x_signed_error_m": float(components[0]),
+                "y_signed_error_m": float(components[1]),
+                "z_signed_error_m": float(components[2]),
             }
         )
     return rows

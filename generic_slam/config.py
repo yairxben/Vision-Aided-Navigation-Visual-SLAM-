@@ -14,12 +14,23 @@ from .contracts import ContractError
 
 
 SCIENTIFIC_IMPLEMENTATION_REVISION = (
-    "transactional-vo-refinement-loop-gauge-tolerance-v1"
+    "transactional-vo-refinement-loop-gauge-tolerance-v2-detector-factory"
 )
+
+
+FEATURE_DETECTORS = ("akaze", "sift")
 
 
 DEFAULT_ALGORITHM_CONFIG: Dict[str, Any] = {
     "frontend": {
+        # "akaze": binary descriptors, exact brute-force Hamming matching.
+        # "sift": float descriptors, FLANN KD-tree matching (settings below).
+        "detector": "akaze",
+        "akaze": {
+            # Below OpenCV's 0.001 default: on KITTI 00 this gives more
+            # geometrically valid stereo matches than SIFT at ~2.5x the speed.
+            "threshold": 0.0002,
+        },
         "sift": {
             "contrast_threshold": 0.02,
             "edge_threshold": 10,
@@ -167,6 +178,11 @@ def validate_algorithm_config(config: Mapping[str, Any]) -> None:
     """Validate values and cross-field invariants without adding run properties."""
 
     frontend = config["frontend"]
+    if frontend["detector"] not in FEATURE_DETECTORS:
+        raise ContractError(
+            "frontend.detector must be one of {}".format(", ".join(FEATURE_DETECTORS))
+        )
+    _number(frontend["akaze"]["threshold"], "frontend.akaze.threshold", minimum=0.0)
     _number(frontend["sift"]["contrast_threshold"], "frontend.sift.contrast_threshold", minimum=0.0)
     _number(frontend["sift"]["edge_threshold"], "frontend.sift.edge_threshold", minimum=0.0)
     _nonnegative_integer(frontend["flann"]["algorithm"], "frontend.flann.algorithm")
@@ -333,6 +349,7 @@ def write_resolved_config(config: AlgorithmConfig, path: Path) -> None:
 __all__ = [
     "AlgorithmConfig",
     "DEFAULT_ALGORITHM_CONFIG",
+    "FEATURE_DETECTORS",
     "SCIENTIFIC_IMPLEMENTATION_REVISION",
     "load_resolved_config",
     "resolve_algorithm_config",

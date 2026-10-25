@@ -15,5 +15,8 @@ venv/
 /course_exercises/dataset
 diagnostics/
 
+# Published run results (run_slam.py copies figures and summaries here)
+results/
+
 # Local Claude Code settings
 .claude/

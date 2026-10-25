@@ -169,24 +169,28 @@ def _initialize_landmark(
     calibration: gtsam.Cal3_S2Stereo,
     maximum_depth: Optional[float],
 ):
-    saw_finite = False
-    excessive = None
-    for observation in reversed(observations):
+    backprojected = []
+    for observation in observations:
         camera = gtsam.StereoCamera(camera_poses[observation.frame_id], calibration)
         point = np.asarray(camera.backproject(observation.point()), dtype=float).reshape(3)
+        depth = float("nan")
+        if np.all(np.isfinite(point)):
+            depth = float(np.asarray(
+                camera_poses[observation.frame_id].transformTo(point), dtype=float
+            ).reshape(3)[2])
+        backprojected.append((observation, point, depth))
+    if maximum_depth is not None:
+        # Reject the whole landmark if any observation is too far: near-zero
+        # disparity leaves depth unconstrained and makes Marginals singular.
+        limit = maximum_depth - 4.0 * np.spacing(maximum_depth)
+        for observation, _, depth in reversed(backprojected):
+            if np.isfinite(depth) and depth > 0.0 and depth >= limit:
+                return None, observation.frame_id, depth, EXCESSIVE_INITIALIZATION_DEPTH
+    saw_finite = False
+    for observation, point, depth in reversed(backprojected):
         if not np.all(np.isfinite(point)):
             continue
         saw_finite = True
-        camera_point = np.asarray(
-            camera_poses[observation.frame_id].transformTo(point), dtype=float
-        ).reshape(3)
-        depth = float(camera_point[2])
-        if maximum_depth is not None and np.isfinite(depth) and depth > 0.0 and depth >= (
-            maximum_depth - 4.0 * np.spacing(maximum_depth)
-        ):
-            if excessive is None:
-                excessive = (observation.frame_id, depth)
-            continue
         if all(
             np.all(np.isfinite(camera_poses[item.frame_id].transformTo(point)))
             and float(np.asarray(camera_poses[item.frame_id].transformTo(point))[2]) > 0.0
@@ -195,8 +199,6 @@ def _initialize_landmark(
             return point, observation.frame_id, depth, ""
     if not saw_finite:
         return None, -1, float("nan"), NO_FINITE_BACKPROJECTION
-    if excessive is not None:
-        return None, excessive[0], excessive[1], EXCESSIVE_INITIALIZATION_DEPTH
     return None, -1, float("nan"), NO_ALL_CAMERA_POSITIVE_DEPTH_INITIALIZATION
 
 
