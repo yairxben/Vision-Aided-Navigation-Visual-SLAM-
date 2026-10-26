@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+from concurrent.futures import ThreadPoolExecutor
 from dataclasses import dataclass
 from typing import Mapping, Optional, Sequence, Tuple
 
@@ -9,6 +10,18 @@ import cv2
 import numpy as np
 
 from ..contracts import ContractError
+
+# One helper thread runs the second of two independent per-frame operations
+# (right image while the caller does the left; reverse match while the caller
+# does the forward one). OpenCV releases the GIL, so the two run in parallel.
+_SIDE_EXECUTOR: Optional[ThreadPoolExecutor] = None
+
+
+def _side_executor() -> ThreadPoolExecutor:
+    global _SIDE_EXECUTOR
+    if _SIDE_EXECUTOR is None:
+        _SIDE_EXECUTOR = ThreadPoolExecutor(max_workers=1, thread_name_prefix="frontend-side")
+    return _SIDE_EXECUTOR
 
 
 @dataclass(frozen=True)
@@ -67,6 +80,8 @@ class FeatureFrontend:
         stereo = frontend_config["stereo"]
         self.detector_type = str(frontend_config["detector"])
         self._detector = create_detector(frontend_config)
+        # A second instance: OpenCV detector objects are not shared across threads.
+        self._right_detector = create_detector(frontend_config)
         self._index_parameters = {
             "algorithm": int(flann["algorithm"]),
             "trees": int(flann["trees"]),
@@ -93,14 +108,28 @@ class FeatureFrontend:
             dict(self._index_parameters), dict(self._search_parameters)
         )
 
-    def extract(self, image: np.ndarray, label: str = "image") -> ImageFeatures:
+    @property
+    def is_deterministic(self) -> bool:
+        """True when matching uses no random state (exact brute force).
+
+        FLANN's randomized KD-trees draw from OpenCV's RNG, so for SIFT the
+        order of matcher calls matters and they must stay sequential.
+        """
+
+        return self.detector_type == "akaze"
+
+    @staticmethod
+    def _extract_with(detector: cv2.Feature2D, image: np.ndarray, label: str) -> ImageFeatures:
         if image is None or np.asarray(image).ndim != 2:
             raise ContractError("{} must be a loaded grayscale image".format(label))
-        keypoints, descriptors = self._detector.detectAndCompute(image, None)
+        keypoints, descriptors = detector.detectAndCompute(image, None)
         return ImageFeatures(
             keypoints=tuple(keypoints),
             descriptors=_require_descriptors(descriptors, label),
         )
+
+    def extract(self, image: np.ndarray, label: str = "image") -> ImageFeatures:
+        return self._extract_with(self._detector, image, label)
 
     def one_way_matches(
         self, descriptors_query: np.ndarray, descriptors_train: np.ndarray
@@ -111,8 +140,12 @@ class FeatureFrontend:
     def extract_stereo(
         self, left_image: np.ndarray, right_image: np.ndarray
     ) -> StereoFeatures:
+        # Detection has no random state, so the two images run in parallel.
+        right_future = _side_executor().submit(
+            self._extract_with, self._right_detector, right_image, "right stereo image"
+        )
         left = self.extract(left_image, "left stereo image")
-        right = self.extract(right_image, "right stereo image")
+        right = right_future.result()
         inliers = []
         outliers = []
         for match in self.one_way_matches(left.descriptors, right.descriptors):
@@ -139,9 +172,17 @@ class FeatureFrontend:
     ) -> Tuple[cv2.DMatch, ...]:
         """Retain forward matches whose reverse nearest match is identical."""
 
-        matcher = self.create_matcher()
-        forward = matcher.match(descriptors_back, descriptors_front)
-        reverse = matcher.match(descriptors_front, descriptors_back)
+        if self.is_deterministic:
+            # Exact brute force: forward and reverse are independent.
+            reverse_future = _side_executor().submit(
+                self.create_matcher().match, descriptors_front, descriptors_back
+            )
+            forward = self.create_matcher().match(descriptors_back, descriptors_front)
+            reverse = reverse_future.result()
+        else:
+            matcher = self.create_matcher()
+            forward = matcher.match(descriptors_back, descriptors_front)
+            reverse = matcher.match(descriptors_front, descriptors_back)
         reverse_map = {match.queryIdx: match.trainIdx for match in reverse}
         return tuple(
             sorted(

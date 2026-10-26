@@ -7,6 +7,8 @@ import os
 import resource
 import tempfile
 import time
+from collections import deque
+from concurrent.futures import ThreadPoolExecutor
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Dict, List, Mapping, Optional, Tuple
@@ -36,6 +38,28 @@ from .adapter import (
     validate_tracking_store,
 )
 from .lecturer_store import TrackingDB
+
+
+class _BackgroundWriter:
+    """Writes per-transition evidence files off the tracking critical path."""
+
+    def __init__(self) -> None:
+        self._executor = ThreadPoolExecutor(max_workers=1, thread_name_prefix="evidence-writer")
+        self._pending = deque()
+
+    def submit(self, function, *args, **kwargs) -> None:
+        self._pending.append(self._executor.submit(function, *args, **kwargs))
+        # Surface write errors promptly instead of only at the end.
+        while self._pending and self._pending[0].done():
+            self._pending.popleft().result()
+
+    def finish(self) -> None:
+        """Wait for every write and re-raise the first failure."""
+        try:
+            while self._pending:
+                self._pending.popleft().result()
+        finally:
+            self._executor.shutdown(wait=True)
 
 
 TRANSITION_FIELDS = (
@@ -251,6 +275,7 @@ def run_tracking_stage(
     attempt = Path(
         tempfile.mkdtemp(prefix=".tracking-attempt-", dir=str(destination.parent))
     )
+    writer = _BackgroundWriter()
     try:
         reset_random_generators(int(config.section("visual_odometry")["seed"]))
         frontend = FeatureFrontend(config.section("frontend"))
@@ -355,7 +380,8 @@ def run_tracking_stage(
                     consensus_points, intrinsic, ransac.model.rotations,
                     ransac.model.translations,
                 )
-            save_npz_atomic(
+            writer.submit(
+                save_npz_atomic,
                 evidence_root / "transition_{:06d}_{:06d}.npz".format(
                     current_frame_id - 1, current_frame_id
                 ),
@@ -385,6 +411,7 @@ def run_tracking_stage(
             )
             previous_stereo = current_stereo
 
+        writer.finish()
         validate_tracking_store(adapter.database, frame_count)
         poses = np.asarray(world_to_camera, dtype=float)
         inverse = np.linalg.inv(poses)
@@ -428,6 +455,10 @@ def run_tracking_stage(
             positions, adapter.database,
         )
     except Exception:
+        try:
+            writer.finish()  # stop writing into the attempt before moving it
+        except Exception:
+            pass  # the original error is the one to report
         quarantine = attempt.with_name(attempt.name + ".failed")
         if attempt.exists():
             os.replace(str(attempt), str(quarantine))

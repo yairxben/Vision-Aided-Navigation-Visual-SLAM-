@@ -2,7 +2,9 @@
 
 from __future__ import annotations
 
+from collections import OrderedDict
 from dataclasses import dataclass
+from typing import Optional
 
 import numpy as np
 
@@ -37,20 +39,62 @@ class LoopMatchResult:
         )
 
 
+class StereoFeatureCache:
+    """Least-recently-used keyframe stereo features shared across Loop Closure pairs.
+
+    The current keyframe is matched against up to several candidates, and
+    earlier keyframes recur as candidates for consecutive currents, so each
+    keyframe would otherwise be re-extracted many times. Only valid when the
+    frontend is deterministic: SIFT/FLANN matching draws from OpenCV's RNG,
+    which each pair reseeds, so skipping a stereo match there would change
+    the random sequence.
+    """
+
+    def __init__(
+        self, dataset: KittiEstimationContext, frontend: FeatureFrontend, capacity: int = 64
+    ) -> None:
+        if not frontend.is_deterministic:
+            raise ValueError("feature caching requires a deterministic frontend")
+        self._dataset = dataset
+        self._frontend = frontend
+        self._capacity = int(capacity)
+        self._entries: "OrderedDict[int, StereoFeatures]" = OrderedDict()
+        self.hits = 0
+        self.misses = 0
+
+    def get(self, frame_id: int) -> StereoFeatures:
+        frame_id = int(frame_id)
+        if frame_id in self._entries:
+            self._entries.move_to_end(frame_id)
+            self.hits += 1
+            return self._entries[frame_id]
+        self.misses += 1
+        features = self._frontend.extract_stereo(*self._dataset.read_stereo(frame_id))
+        self._entries[frame_id] = features
+        if len(self._entries) > self._capacity:
+            self._entries.popitem(last=False)
+        return features
+
+
 def evaluate_loop_pair(
     dataset: KittiEstimationContext,
     config: AlgorithmConfig,
     previous_frame_id: int,
     current_frame_id: int,
+    feature_cache: Optional[StereoFeatureCache] = None,
 ) -> LoopMatchResult:
     loop = config.section("loop_closure")
     ransac_config = loop["ransac"]
     reset_random_generators(int(loop["pair_seed"]))
     frontend = FeatureFrontend(config.section("frontend"))
-    previous_images = dataset.read_stereo(previous_frame_id)
-    current_images = dataset.read_stereo(current_frame_id)
-    previous_stereo = frontend.extract_stereo(*previous_images)
-    current_stereo = frontend.extract_stereo(*current_images)
+    if feature_cache is not None:
+        previous_stereo = feature_cache.get(previous_frame_id)
+        current_stereo = feature_cache.get(current_frame_id)
+    else:
+        previous_images = dataset.read_stereo(previous_frame_id)
+        current_images = dataset.read_stereo(current_frame_id)
+        previous_stereo = frontend.extract_stereo(*previous_images)
+        current_stereo = frontend.extract_stereo(*current_images)
     reciprocal = frontend.reciprocal_matches(
         previous_stereo.left.descriptors, current_stereo.left.descriptors
     )
@@ -89,4 +133,4 @@ def evaluate_loop_pair(
     )
 
 
-__all__ = ["LoopMatchResult", "evaluate_loop_pair"]
+__all__ = ["LoopMatchResult", "StereoFeatureCache", "evaluate_loop_pair"]

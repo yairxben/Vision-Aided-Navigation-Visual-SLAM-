@@ -34,7 +34,8 @@ from ..frontend.temporal import actual_consensus_pixels
 from ..geometry import validate_rigid_pose
 from ..pose_graph.stage import PoseGraphOutput
 from .detection import CovarianceGraph, score_previous_keyframes
-from .matching import LoopMatchResult, evaluate_loop_pair
+from ..frontend.features import FeatureFrontend
+from .matching import LoopMatchResult, StereoFeatureCache, evaluate_loop_pair
 from .measurement import SmallBundleResult, measure_loop
 from .policy import (
     AcceptedLoopAnchor,
@@ -492,6 +493,7 @@ def _process_current(
     anchors: List[AcceptedLoopAnchor],
     currents_root: Path,
     identity: Mapping[str, object],
+    feature_cache: Optional[StereoFeatureCache] = None,
 ) -> CovarianceGraph:
     keyframe_ids = state.keyframe_ids
     current_frame_id = keyframe_ids[ordinal]
@@ -563,7 +565,7 @@ def _process_current(
         try:
             match = evaluate_loop_pair(
                 dataset, config, candidate.score.previous_frame_id,
-                candidate.score.current_frame_id,
+                candidate.score.current_frame_id, feature_cache,
             )
         except Exception as error:
             row["disposition"] = "matching_failed"
@@ -723,6 +725,10 @@ def run_loop_closure_stage(
         root, pose_graph, config, identity
     )
     policy = LoopClosurePolicy.from_config(config.section("loop_closure"))
+    frontend = FeatureFrontend(config.section("frontend"))
+    feature_cache = (
+        StereoFeatureCache(dataset, frontend) if frontend.is_deterministic else None
+    )
     started = time.perf_counter()
     new_currents = 0
     next_ordinal = (completed[-1] + 1) if completed else 1
@@ -739,6 +745,7 @@ def run_loop_closure_stage(
             anchors=anchors,
             currents_root=root / "currents",
             identity=identity,
+            feature_cache=feature_cache,
         )
         completed.append(ordinal)
         new_currents += 1
