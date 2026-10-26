@@ -1,0 +1,9 @@
+{
+  "loop_closure": {
+    "previous_ordinal_cluster_radius": 3,
+    "current_ordinal_cluster_radius": 3,
+    "ransac": {
+      "maximum_hypothesis_attempts": 600
+    }
+  }
+}

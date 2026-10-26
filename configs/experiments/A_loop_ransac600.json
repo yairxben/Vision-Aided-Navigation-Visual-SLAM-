@@ -1,0 +1,7 @@
+{
+  "loop_closure": {
+    "ransac": {
+      "maximum_hypothesis_attempts": 600
+    }
+  }
+}
