@@ -285,6 +285,31 @@ def validate_algorithm_config(config: Mapping[str, Any]) -> None:
     _positive_integer(analysis["covariance_display_stride"], "analysis.covariance_display_stride")
 
 
+# Configuration sections each stage reads, and the stages it consumes. A
+# stage's fingerprint covers only these, so changing e.g. loop_closure keeps
+# tracking/keyframes/bundle/pose_graph results valid and reusable.
+STAGE_CONFIG_SECTIONS: Dict[str, Tuple[str, ...]] = {
+    "dataset": (),
+    "tracking": ("frontend", "visual_odometry"),
+    "keyframes": ("keyframes",),
+    "bundle": ("bundle",),
+    "pose_graph": ("bundle",),
+    "loop_closure": ("loop_closure", "frontend", "bundle"),
+    "analysis": ("analysis",),
+    "report": ("analysis", "frontend"),
+}
+STAGE_UPSTREAM: Dict[str, Tuple[str, ...]] = {
+    "dataset": (),
+    "tracking": ("dataset",),
+    "keyframes": ("tracking",),
+    "bundle": ("tracking", "keyframes"),
+    "pose_graph": ("bundle",),
+    "loop_closure": ("pose_graph",),
+    "analysis": ("dataset", "tracking", "keyframes", "bundle", "pose_graph", "loop_closure"),
+    "report": ("analysis",),
+}
+
+
 @dataclass(frozen=True)
 class AlgorithmConfig:
     """A fully resolved and validated algorithm configuration."""
@@ -298,6 +323,18 @@ class AlgorithmConfig:
         if not isinstance(value, Mapping):
             raise ContractError("missing configuration section: {}".format(name))
         return value
+
+    def stage_fingerprint(self, stage: str) -> str:
+        """Fingerprint of the configuration a stage and its upstream stages read."""
+
+        if stage not in STAGE_CONFIG_SECTIONS:
+            raise ContractError("unknown pipeline stage: {}".format(stage))
+        payload = {
+            "stage": stage,
+            "sections": {name: self.values[name] for name in STAGE_CONFIG_SECTIONS[stage]},
+            "upstream": {name: self.stage_fingerprint(name) for name in STAGE_UPSTREAM[stage]},
+        }
+        return hashlib.sha256(_canonical_json_bytes(payload)).hexdigest()
 
 
 def resolve_algorithm_config(path: Optional[Path] = None) -> AlgorithmConfig:
@@ -351,6 +388,8 @@ __all__ = [
     "DEFAULT_ALGORITHM_CONFIG",
     "FEATURE_DETECTORS",
     "SCIENTIFIC_IMPLEMENTATION_REVISION",
+    "STAGE_CONFIG_SECTIONS",
+    "STAGE_UPSTREAM",
     "load_resolved_config",
     "resolve_algorithm_config",
     "validate_algorithm_config",

@@ -98,7 +98,7 @@ def run_stage(argv: Sequence[str]) -> None:
         raise ContractError("child stage configuration identity differs from run")
     dataset_manifest = _verified_manifest(
         output / "dataset", "dataset", dataset.sequence_id, dataset.dataset_id,
-        config.fingerprint, {},
+        config.stage_fingerprint("dataset"), {},
     )
 
     # Reporting deliberately depends only on durable manifests and analysis
@@ -106,24 +106,24 @@ def run_stage(argv: Sequence[str]) -> None:
     if arguments.stage == "report":
         tracking_manifest = _verified_manifest(
             output / "tracking", "tracking", dataset.sequence_id, dataset.dataset_id,
-            config.fingerprint, _ids(dataset=dataset_manifest),
+            config.stage_fingerprint("tracking"), _ids(dataset=dataset_manifest),
         )
         keyframe_manifest = _verified_manifest(
             output / "keyframes", "keyframes", dataset.sequence_id, dataset.dataset_id,
-            config.fingerprint, _ids(tracking=tracking_manifest),
+            config.stage_fingerprint("keyframes"), _ids(tracking=tracking_manifest),
         )
         bundle_manifest = _verified_manifest(
             output / "bundle", "bundle", dataset.sequence_id, dataset.dataset_id,
-            config.fingerprint,
+            config.stage_fingerprint("bundle"),
             _ids(tracking=tracking_manifest, keyframes=keyframe_manifest),
         )
         pose_graph_manifest = _verified_manifest(
             output / "pose_graph", "pose_graph", dataset.sequence_id, dataset.dataset_id,
-            config.fingerprint, _ids(bundle=bundle_manifest),
+            config.stage_fingerprint("pose_graph"), _ids(bundle=bundle_manifest),
         )
         loop_manifest = _verified_manifest(
             output / "loop_closure", "loop_closure", dataset.sequence_id,
-            dataset.dataset_id, config.fingerprint,
+            dataset.dataset_id, config.stage_fingerprint("loop_closure"),
             _ids(pose_graph=pose_graph_manifest),
         )
         analysis_upstream = _ids(
@@ -133,7 +133,7 @@ def run_stage(argv: Sequence[str]) -> None:
         )
         analysis_manifest = _verified_manifest(
             output / "analysis", "analysis", dataset.sequence_id, dataset.dataset_id,
-            config.fingerprint, analysis_upstream,
+            config.stage_fingerprint("analysis"), analysis_upstream,
         )
         from .analysis.reporting import run_report_stage
 
@@ -155,7 +155,7 @@ def run_stage(argv: Sequence[str]) -> None:
     tracking_upstream = _ids(dataset=dataset_manifest)
     tracking_manifest = _verified_manifest(
         output / "tracking", "tracking", dataset.sequence_id, dataset.dataset_id,
-        config.fingerprint, tracking_upstream,
+        config.stage_fingerprint("tracking"), tracking_upstream,
     )
     if arguments.stage == "keyframes":
         from .keyframes.stage import run_keyframe_stage
@@ -175,17 +175,17 @@ def run_stage(argv: Sequence[str]) -> None:
     keyframe_upstream = _ids(tracking=tracking_manifest)
     keyframe_manifest = _verified_manifest(
         output / "keyframes", "keyframes", dataset.sequence_id, dataset.dataset_id,
-        config.fingerprint, keyframe_upstream,
+        config.stage_fingerprint("keyframes"), keyframe_upstream,
     )
     if arguments.stage == "loop_closure":
         bundle_manifest = _verified_manifest(
             output / "bundle", "bundle", dataset.sequence_id, dataset.dataset_id,
-            config.fingerprint,
+            config.stage_fingerprint("bundle"),
             _ids(tracking=tracking_manifest, keyframes=keyframe_manifest),
         )
         pose_graph_manifest = _verified_manifest(
             output / "pose_graph", "pose_graph", dataset.sequence_id, dataset.dataset_id,
-            config.fingerprint, _ids(bundle=bundle_manifest),
+            config.stage_fingerprint("pose_graph"), _ids(bundle=bundle_manifest),
         )
         from .pose_graph.stage import load_pose_graph_output, validate_pose_graph_artifacts
         from .loop_closure.stage import run_loop_closure_stage
@@ -219,7 +219,7 @@ def run_stage(argv: Sequence[str]) -> None:
     bundle_upstream = _ids(tracking=tracking_manifest, keyframes=keyframe_manifest)
     bundle_manifest = _verified_manifest(
         output / "bundle", "bundle", dataset.sequence_id, dataset.dataset_id,
-        config.fingerprint, bundle_upstream,
+        config.stage_fingerprint("bundle"), bundle_upstream,
     )
     from .bundle.stage import load_bundle_output, validate_bundle_artifacts
 
@@ -236,7 +236,7 @@ def run_stage(argv: Sequence[str]) -> None:
         if existing_manifest.is_file():
             _verified_manifest(
                 output / "pose_graph", "pose_graph", dataset.sequence_id,
-                dataset.dataset_id, config.fingerprint,
+                dataset.dataset_id, config.stage_fingerprint("pose_graph"),
                 _ids(bundle=bundle_manifest),
             )
             validate_pose_graph_artifacts(output / "pose_graph", len(bundle.keyframe_ids))
@@ -250,7 +250,7 @@ def run_stage(argv: Sequence[str]) -> None:
     pose_graph_upstream = _ids(bundle=bundle_manifest)
     pose_graph_manifest = _verified_manifest(
         output / "pose_graph", "pose_graph", dataset.sequence_id, dataset.dataset_id,
-        config.fingerprint, pose_graph_upstream,
+        config.stage_fingerprint("pose_graph"), pose_graph_upstream,
     )
     from .pose_graph.stage import (
         load_pose_graph_artifacts,
@@ -262,7 +262,7 @@ def run_stage(argv: Sequence[str]) -> None:
     loop_upstream = _ids(pose_graph=pose_graph_manifest)
     loop_manifest = _verified_manifest(
         output / "loop_closure", "loop_closure", dataset.sequence_id, dataset.dataset_id,
-        config.fingerprint, loop_upstream,
+        config.stage_fingerprint("loop_closure"), loop_upstream,
     )
     from .loop_closure.stage import load_loop_closure_output, validate_loop_closure_artifacts
 

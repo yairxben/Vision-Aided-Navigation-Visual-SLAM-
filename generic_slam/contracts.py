@@ -24,6 +24,10 @@ class RunRequest:
     output_root: Path
     config_path: Optional[Path] = None
     gt_convention: str = "world-to-camera"
+    # Earlier output root whose still-valid completed stages are linked in.
+    reuse_from: Optional[Path] = None
+    # Last stage to run; later stages are left for a future invocation.
+    stop_after: Optional[str] = None
 
 
 @dataclass(frozen=True)

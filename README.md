@@ -28,6 +28,15 @@ pip install -e .        # optional: import/run generic_slam from any directory
 python run_slam.py --dataset-root <kitti-root> --sequence 00 --output-root outputs/seq00
 ```
 
+Every stage (tracking database, keyframes, Bundle windows, Pose Graph, Loop Closure, analysis, report) is saved under `--output-root` and is never recomputed when it is still valid:
+
+- **Resume:** rerunning with the same `--output-root` continues from the first unfinished stage.
+- **Run only part:** `--stop-after bundle` (any stage name) stops there; rerun without it to continue.
+- **Experiment without recomputing:** `--reuse-from <earlier output root>` with a new `--output-root` and `--config` hard-links every earlier stage whose configuration is unchanged. Each stage is fingerprinted only by the config sections it and its upstream stages read (`STAGE_CONFIG_SECTIONS` in `generic_slam/config.py`), so e.g. a `loop_closure` change reuses tracking, keyframes, Bundle and Pose Graph.
+- **Watch progress:** `python tools/run_status.py <output-root> --watch 30`.
+
+Readable results (`summary.md`, figures, statistics, config) are copied to `results/<run>_<timestamp>/`.
+
 `course_exercises/` is the frozen course code. Its files are byte-identical to the submitted versions, so recorded source hashes stay valid. Run its scripts and tests from inside that folder (for example `cd course_exercises && python ex7.py`). It expects `dataset/` and `diagnostics/` inside `course_exercises/`.
 
 ---

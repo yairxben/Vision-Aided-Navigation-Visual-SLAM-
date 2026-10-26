@@ -8,7 +8,7 @@ from typing import Optional, Sequence
 
 from .contracts import GenericSlamError, RunRequest
 from .dataset.ground_truth import GROUND_TRUTH_CONVENTIONS, WORLD_TO_CAMERA
-from .pipeline import run_pipeline
+from .pipeline import STAGE_ORDER, run_pipeline
 
 
 def build_parser() -> argparse.ArgumentParser:
@@ -35,6 +35,21 @@ def build_parser() -> argparse.ArgumentParser:
             "camera-to-world for original KITTI odometry pose files"
         ),
     )
+    parser.add_argument(
+        "--reuse-from",
+        type=Path,
+        default=None,
+        help=(
+            "earlier output root: completed stages whose configuration is "
+            "unchanged are hard-linked in instead of recomputed"
+        ),
+    )
+    parser.add_argument(
+        "--stop-after",
+        choices=STAGE_ORDER,
+        default=None,
+        help="run only up to and including this stage; rerun later to continue",
+    )
     return parser
 
 
@@ -48,14 +63,18 @@ def main(argv: Optional[Sequence[str]] = None) -> int:
                 output_root=arguments.output_root,
                 config_path=arguments.config,
                 gt_convention=arguments.gt_convention,
+                reuse_from=arguments.reuse_from,
+                stop_after=arguments.stop_after,
             )
         )
     except GenericSlamError as error:
         print("generic_slam: {}".format(error))
         return 2
     print(
-        "generic_slam completed sequence {} at {}".format(
-            prepared.normalized_sequence_id, prepared.request.output_root
+        "generic_slam {} sequence {} at {}".format(
+            "stopped after {} for".format(arguments.stop_after)
+            if arguments.stop_after else "completed",
+            prepared.normalized_sequence_id, prepared.request.output_root,
         )
     )
     return 0

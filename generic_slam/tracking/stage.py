@@ -200,7 +200,7 @@ def _resume_if_complete(
     manifest = load_stage_manifest(path)
     validate_stage_manifest(
         manifest, root, expected_stage="tracking", sequence_id=dataset.sequence_id,
-        dataset_id=dataset.dataset_id, config_fingerprint=config.fingerprint,
+        dataset_id=dataset.dataset_id, config_fingerprint=config.stage_fingerprint("tracking"),
         upstream_stage_ids=upstream_stage_ids,
     )
     database = validate_tracking_artifacts(root, dataset.frame_count)
@@ -406,7 +406,7 @@ def run_tracking_stage(
             stage="tracking",
             sequence_id=dataset.sequence_id,
             dataset_id=dataset.dataset_id,
-            config_fingerprint=config.fingerprint,
+            config_fingerprint=config.stage_fingerprint("tracking"),
             upstream_stage_ids=upstream_stage_ids,
             counts={
                 "frame_count": frame_count,

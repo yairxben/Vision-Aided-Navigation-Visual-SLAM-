@@ -102,7 +102,7 @@ def _identity(
     return {
         "sequence_id": dataset.sequence_id,
         "dataset_id": dataset.dataset_id,
-        "config_fingerprint": config.fingerprint,
+        "config_fingerprint": config.stage_fingerprint("loop_closure"),
         "upstream_stage_ids": dict(upstream_stage_ids),
     }
 
@@ -713,7 +713,7 @@ def run_loop_closure_stage(
         validate_stage_manifest(
             manifest, root, expected_stage="loop_closure",
             sequence_id=dataset.sequence_id, dataset_id=dataset.dataset_id,
-            config_fingerprint=config.fingerprint,
+            config_fingerprint=config.stage_fingerprint("loop_closure"),
             upstream_stage_ids=upstream_stage_ids,
         )
         validate_loop_closure_artifacts(root, pose_graph.keyframe_ids)
@@ -801,7 +801,7 @@ def run_loop_closure_stage(
     _validate_loop_payload(root, state.keyframe_ids, identity)
     manifest = StageManifest.complete(
         stage="loop_closure", sequence_id=dataset.sequence_id,
-        dataset_id=dataset.dataset_id, config_fingerprint=config.fingerprint,
+        dataset_id=dataset.dataset_id, config_fingerprint=config.stage_fingerprint("loop_closure"),
         upstream_stage_ids=upstream_stage_ids,
         counts={
             "keyframe_count": len(state.keyframe_ids),

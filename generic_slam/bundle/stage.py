@@ -87,7 +87,7 @@ def _stage_identity(
         "schema": "generic-slam-bundle-state-v1",
         "sequence_id": dataset.sequence_id,
         "dataset_id": dataset.dataset_id,
-        "config_fingerprint": config.fingerprint,
+        "config_fingerprint": config.stage_fingerprint("bundle"),
         "upstream_stage_ids": dict(upstream_stage_ids),
     }
 
@@ -458,7 +458,7 @@ def validate_bundle_artifacts(
     manifest = load_stage_manifest(root / "manifest.json")
     validate_stage_manifest(
         manifest, root, expected_stage="bundle", sequence_id=dataset.sequence_id,
-        dataset_id=dataset.dataset_id, config_fingerprint=config.fingerprint,
+        dataset_id=dataset.dataset_id, config_fingerprint=config.stage_fingerprint("bundle"),
         upstream_stage_ids=upstream_stage_ids,
     )
     selected = tuple(int(value) for value in keyframes)
@@ -491,7 +491,7 @@ def run_bundle_stage(
         manifest = load_stage_manifest(manifest_path)
         validate_stage_manifest(
             manifest, root, expected_stage="bundle", sequence_id=dataset.sequence_id,
-            dataset_id=dataset.dataset_id, config_fingerprint=config.fingerprint,
+            dataset_id=dataset.dataset_id, config_fingerprint=config.stage_fingerprint("bundle"),
             upstream_stage_ids=upstream_stage_ids,
         )
         validate_bundle_artifacts(
@@ -606,7 +606,7 @@ def run_bundle_stage(
     _validate_bundle_payload(root, keyframe_ids, identity=identity)
     manifest = StageManifest.complete(
         stage="bundle", sequence_id=dataset.sequence_id,
-        dataset_id=dataset.dataset_id, config_fingerprint=config.fingerprint,
+        dataset_id=dataset.dataset_id, config_fingerprint=config.stage_fingerprint("bundle"),
         upstream_stage_ids=upstream_stage_ids,
         counts={
             "keyframe_count": len(keyframe_ids),

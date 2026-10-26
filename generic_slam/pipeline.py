@@ -14,6 +14,7 @@ import numpy as np
 
 from .artifacts.io import read_json, require_files, save_npy_atomic, save_npz_atomic, write_json_atomic
 from .artifacts.manifest import StageManifest, load_stage_manifest, validate_stage_manifest, write_stage_manifest
+from .artifacts.reuse import reuse_completed_stages
 from .config import (
     SCIENTIFIC_IMPLEMENTATION_REVISION,
     resolve_algorithm_config,
@@ -181,7 +182,15 @@ def prepare_run(request: RunRequest) -> PreparedRun:
             raise ContractError("existing resolved configuration differs")
     else:
         write_resolved_config(config, resolved_path)
-    dataset_manifest = _prepare_dataset_stage(output_root, dataset, config.fingerprint)
+    if request.reuse_from is not None:
+        reused = reuse_completed_stages(
+            request.reuse_from, output_root, config, dataset.dataset_id,
+            ("dataset",) + STAGE_ORDER,
+        )
+        print("generic_slam: reused stages from {}: {}".format(
+            Path(request.reuse_from).expanduser(), ", ".join(reused) or "none"
+        ))
+    dataset_manifest = _prepare_dataset_stage(output_root, dataset, config.stage_fingerprint("dataset"))
     run_record = dict(run_record)
     stages = dict(run_record.get("stages", {}))
     stages["dataset"] = {"status": "complete", "stage_id": dataset_manifest.stage_id}
@@ -199,6 +208,8 @@ def prepare_run(request: RunRequest) -> PreparedRun:
             output_root,
             config_path,
             gt_convention,
+            request.reuse_from,
+            request.stop_after,
         ),
         normalized_sequence_id=dataset.sequence_id,
         dataset_id=dataset.dataset_id,
@@ -224,9 +235,14 @@ def _run_stage_child(prepared: PreparedRun, stage: str) -> None:
 def run_pipeline(request: RunRequest) -> PreparedRun:
     """Run or safely resume every scientific and reporting stage in order."""
 
+    if request.stop_after is not None and request.stop_after not in STAGE_ORDER:
+        raise ContractError("--stop-after must be one of {}".format(", ".join(STAGE_ORDER)))
     prepared = prepare_run(request)
     run_path = prepared.request.output_root / "run.json"
-    for stage in STAGE_ORDER:
+    stages_to_run = STAGE_ORDER
+    if request.stop_after is not None:
+        stages_to_run = STAGE_ORDER[: STAGE_ORDER.index(request.stop_after) + 1]
+    for stage in stages_to_run:
         record = read_json(run_path)
         stages = dict(record.get("stages", {}))
         previous_id = stages.get(stage, {}).get("stage_id")
@@ -252,7 +268,8 @@ def run_pipeline(request: RunRequest) -> PreparedRun:
         record.update({"status": "running", "active_stage": None, "stages": stages})
         write_json_atomic(run_path, record)
     record = read_json(run_path)
-    record.update({"status": "complete", "active_stage": None})
+    finished = stages_to_run == STAGE_ORDER
+    record.update({"status": "complete" if finished else "stopped", "active_stage": None})
     write_json_atomic(run_path, record)
     return prepared
 

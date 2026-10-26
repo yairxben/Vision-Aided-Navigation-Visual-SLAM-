@@ -264,7 +264,7 @@ def run_analysis_stage(
         manifest = load_stage_manifest(manifest_path)
         validate_stage_manifest(
             manifest, root, expected_stage="analysis", sequence_id=dataset.sequence_id,
-            dataset_id=dataset.dataset_id, config_fingerprint=config.fingerprint,
+            dataset_id=dataset.dataset_id, config_fingerprint=config.stage_fingerprint("analysis"),
             upstream_stage_ids=upstream_stage_ids,
         )
         _validate_analysis_artifacts(root, len(keyframes.selection.frame_ids))
@@ -538,7 +538,7 @@ def run_analysis_stage(
         _validate_analysis_artifacts(attempt, len(keyframe_ids))
         manifest = StageManifest.complete(
             stage="analysis", sequence_id=dataset.sequence_id,
-            dataset_id=dataset.dataset_id, config_fingerprint=config.fingerprint,
+            dataset_id=dataset.dataset_id, config_fingerprint=config.stage_fingerprint("analysis"),
             upstream_stage_ids=upstream_stage_ids,
             counts={
                 "frame_count": dataset.frame_count,
@@ -786,7 +786,7 @@ def run_report_stage(
         manifest = load_stage_manifest(manifest_path)
         validate_stage_manifest(
             manifest, root, expected_stage="report", sequence_id=dataset.sequence_id,
-            dataset_id=dataset.dataset_id, config_fingerprint=config.fingerprint,
+            dataset_id=dataset.dataset_id, config_fingerprint=config.stage_fingerprint("report"),
             upstream_stage_ids=upstream_stage_ids,
         )
         _validate_report_artifacts(root)
@@ -1305,7 +1305,7 @@ def run_report_stage(
         _validate_report_artifacts(attempt)
         manifest = StageManifest.complete(
             stage="report", sequence_id=dataset.sequence_id,
-            dataset_id=dataset.dataset_id, config_fingerprint=config.fingerprint,
+            dataset_id=dataset.dataset_id, config_fingerprint=config.stage_fingerprint("report"),
             upstream_stage_ids=upstream_stage_ids,
             counts={
                 "figure_count": len(generated),

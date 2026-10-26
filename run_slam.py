@@ -60,6 +60,8 @@ def run(argv=None) -> int:
     if status != 0 or known.output_root is None:
         return status
     output_root = known.output_root.expanduser().resolve()
+    if not (output_root / "report" / "manifest.json").is_file():
+        return status  # stopped early (--stop-after): nothing to publish yet
     results_dir = known.results_dir or (
         PROJECT_ROOT / "results" / "{}_{}".format(
             output_root.name, datetime.now().strftime("%Y-%m-%d_%H%M")

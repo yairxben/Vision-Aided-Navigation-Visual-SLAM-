@@ -128,7 +128,7 @@ def run_pose_graph_stage(
         validate_stage_manifest(
             manifest, root, expected_stage="pose_graph",
             sequence_id=dataset.sequence_id, dataset_id=dataset.dataset_id,
-            config_fingerprint=config.fingerprint,
+            config_fingerprint=config.stage_fingerprint("pose_graph"),
             upstream_stage_ids=upstream_stage_ids,
         )
         validate_pose_graph_artifacts(root, len(bundle.keyframe_ids))
@@ -202,7 +202,7 @@ def run_pose_graph_stage(
         validate_pose_graph_artifacts(attempt, len(bundle.keyframe_ids))
         manifest = StageManifest.complete(
             stage="pose_graph", sequence_id=dataset.sequence_id,
-            dataset_id=dataset.dataset_id, config_fingerprint=config.fingerprint,
+            dataset_id=dataset.dataset_id, config_fingerprint=config.stage_fingerprint("pose_graph"),
             upstream_stage_ids=upstream_stage_ids,
             counts={
                 "keyframe_count": len(bundle.keyframe_ids),

@@ -88,7 +88,7 @@ def run_keyframe_stage(
         validate_stage_manifest(
             manifest, root, expected_stage="keyframes",
             sequence_id=dataset.sequence_id, dataset_id=dataset.dataset_id,
-            config_fingerprint=config.fingerprint,
+            config_fingerprint=config.stage_fingerprint("keyframes"),
             upstream_stage_ids=upstream_stage_ids,
         )
         validate_keyframe_artifacts(root, dataset.final_frame_id)
@@ -135,7 +135,7 @@ def run_keyframe_stage(
     validate_keyframe_artifacts(root, dataset.final_frame_id)
     manifest = StageManifest.complete(
         stage="keyframes", sequence_id=dataset.sequence_id,
-        dataset_id=dataset.dataset_id, config_fingerprint=config.fingerprint,
+        dataset_id=dataset.dataset_id, config_fingerprint=config.stage_fingerprint("keyframes"),
         upstream_stage_ids=upstream_stage_ids,
         counts={
             "keyframe_count": len(selection.frame_ids),
