@@ -25,8 +25,12 @@ STAGES = (
     "dataset", "tracking", "keyframes", "bundle", "pose_graph", "loop_closure",
     "analysis", "report",
 )
-# Fields whose value legitimately differs between equivalent runs.
-VOLATILE_WORDS = ("runtime", "seconds", "rss", "stage_id", "elapsed", "_root", "_path")
+# Fields whose value legitimately differs between equivalent runs. Config
+# fingerprints are identity metadata (their format changed over time); the
+# configurations themselves are compared separately via resolved_config.json.
+VOLATILE_WORDS = (
+    "runtime", "seconds", "rss", "stage_id", "elapsed", "_root", "_path", "fingerprint",
+)
 
 
 def _volatile(key):
@@ -115,6 +119,14 @@ def _compare_file(first, second, problems):
 
 def compare(root_a, root_b, stages):
     total_problems = 0
+    configs = [root / "resolved_config.json" for root in (root_a, root_b)]
+    if all(path.is_file() for path in configs):
+        config_problems = []
+        _json_equal(*(json.loads(p.read_text(encoding="utf-8")) for p in configs), "config", config_problems)
+        print("{:<13} {}".format("config", "IDENTICAL" if not config_problems else "DIFFERS"))
+        for problem in config_problems[:8]:
+            print("    " + problem)
+        total_problems += len(config_problems)
     for stage in stages:
         a, b = root_a / stage, root_b / stage
         if not a.is_dir() or not b.is_dir():
