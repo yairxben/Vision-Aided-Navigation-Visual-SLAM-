@@ -31,13 +31,8 @@ from ..frontend.pnp import reset_random_generators, run_visual_odometry_ransac
 from ..frontend.stereo import compose_right_camera, project_points, triangulate_stereo_matches
 from ..frontend.temporal import build_four_view_consensus
 from ..geometry import camera_center, homogeneous, validate_rigid_pose
-from .adapter import (
-    PreparedStereoFrame,
-    TrackingStoreAdapter,
-    prepare_stereo_frame,
-    validate_tracking_store,
-)
-from .lecturer_store import TrackingDB
+from .adapter import PreparedStereoFrame, TrackingStoreAdapter, prepare_stereo_frame
+from .store import TrackStore, validate_track_store
 
 
 class _BackgroundWriter:
@@ -83,7 +78,7 @@ class TrackingTrajectoryOutput:
 
 @dataclass(frozen=True)
 class TrackingOutput(TrackingTrajectoryOutput):
-    database: TrackingDB
+    database: TrackStore
 
 
 def _peak_rss_bytes() -> int:
@@ -128,35 +123,11 @@ def _prepared(stereo: StereoFeatures) -> PreparedStereoFrame:
     )
 
 
-def _save_database(database: TrackingDB, directory: Path) -> None:
-    database.serialize(str(directory / "tracking_database"))
+TRACK_STORE_ARTIFACT = "track_observations.npz"
 
 
-def _load_database(path: Path) -> TrackingDB:
-    database = TrackingDB()
-    database.load(str(path.with_suffix("")))
-    return database
-
-
-def _observation_arrays(database: TrackingDB) -> Dict[str, np.ndarray]:
-    frame_ids = []
-    track_ids = []
-    u_left = []
-    u_right = []
-    v_mean = []
-    for (frame_id, track_id), link in sorted(database.linkId_to_link.items()):
-        frame_ids.append(frame_id)
-        track_ids.append(track_id)
-        u_left.append(link.x_left)
-        u_right.append(link.x_right)
-        v_mean.append(link.y)
-    return {
-        "frame_ids": np.asarray(frame_ids, dtype=np.int64),
-        "track_ids": np.asarray(track_ids, dtype=np.int64),
-        "u_left_px": np.asarray(u_left, dtype=float),
-        "u_right_px": np.asarray(u_right, dtype=float),
-        "v_mean_px": np.asarray(v_mean, dtype=float),
-    }
+def _load_database(root: Path, frame_count: int) -> TrackStore:
+    return TrackStore.load(root / TRACK_STORE_ARTIFACT, frame_count)
 
 
 def _read_transition_rows(path: Path) -> List[Dict[str, str]]:
@@ -194,9 +165,9 @@ def validate_tracking_trajectory_artifact(root: Path, expected_frame_count: int)
 
 
 def validate_tracking_artifacts(
-    root: Path, expected_frame_count: int, database: Optional[TrackingDB] = None
-) -> TrackingDB:
-    require_files(root, ("tracking_database.pkl", "track_observations.npz"))
+    root: Path, expected_frame_count: int, database: Optional[TrackStore] = None
+) -> TrackStore:
+    require_files(root, (TRACK_STORE_ARTIFACT,))
     validate_tracking_trajectory_artifact(root, expected_frame_count)
     rows = _read_transition_rows(root / "transitions.csv")
     evidence_root = root / "transition_evidence"
@@ -231,12 +202,9 @@ def validate_tracking_artifacts(
         ):
             raise ContractError("tracking transition evidence shapes differ")
     if database is None:
-        database = _load_database(root / "tracking_database.pkl")
-    validate_tracking_store(database, expected_frame_count)
-    with np.load(root / "track_observations.npz", allow_pickle=False) as data:
-        lengths = {np.asarray(data[name]).shape for name in data.files}
-        if len(lengths) != 1 or next(iter(lengths))[0] != database.link_num():
-            raise ContractError("tracking observation population differs")
+        # Loading validates the store's structure and stereo policy.
+        return _load_database(root, expected_frame_count)
+    validate_track_store(database, expected_frame_count)
     return database
 
 
@@ -384,8 +352,8 @@ def run_tracking_stage(
             supporter_temporal_indices = tuple(
                 item.temporal_match_index for item in ransac.supporters
             )
-            tracks_before = set(adapter.database.tracks(current_frame_id - 1))
-            last_track_before = adapter.database.last_trackId
+            tracks_before = set(adapter.database.tracks(current_frame_id - 1).tolist())
+            last_track_before = adapter.database.last_track_id
             issued, prepared_transition = adapter.add_transition(
                 current_prepared,
                 reciprocal,
@@ -394,7 +362,7 @@ def run_tracking_stage(
             )
             if issued != current_frame_id:
                 raise ContractError("issued tracking FrameId differs")
-            tracks_after = set(adapter.database.tracks(current_frame_id))
+            tracks_after = set(adapter.database.tracks(current_frame_id).tolist())
             created = {value for value in tracks_after if value > last_track_before}
             extended = tracks_before.intersection(tracks_after)
             terminated = tracks_before.difference(tracks_after)
@@ -448,14 +416,14 @@ def run_tracking_stage(
             previous_stereo = current_stereo
 
         writer.finish()
-        validate_tracking_store(adapter.database, frame_count)
+        adapter.database.seal()
+        validate_track_store(adapter.database, frame_count)
         poses = np.asarray(world_to_camera, dtype=float)
         inverse = np.linalg.inv(poses)
         positions = np.asarray(
             [camera_center(pose) for pose in poses], dtype=float
         )
-        _save_database(adapter.database, attempt)
-        save_npz_atomic(attempt / "track_observations.npz", **_observation_arrays(adapter.database))
+        save_npz_atomic(attempt / TRACK_STORE_ARTIFACT, **adapter.database.observation_arrays())
         save_npz_atomic(
             attempt / "pnp_trajectory.npz",
             frame_ids=np.arange(frame_count, dtype=np.int64),
@@ -478,7 +446,7 @@ def run_tracking_stage(
                 "observation_count": adapter.database.link_num(),
             },
             primary_artifacts=(
-                "tracking_database.pkl", "track_observations.npz",
+                TRACK_STORE_ARTIFACT,
                 "pnp_trajectory.npz", "transitions.csv",
             ),
             runtime_seconds=time.perf_counter() - started,
@@ -505,7 +473,7 @@ def load_tracking_output(
     root: Path,
     manifest: Optional[StageManifest] = None,
     *,
-    database: Optional[TrackingDB] = None,
+    database: Optional[TrackStore] = None,
 ) -> TrackingOutput:
     root = Path(root)
     if manifest is None:
@@ -516,7 +484,7 @@ def load_tracking_output(
         inverse = data["camera_to_world"].copy()
         positions = data["positions"].copy()
     if database is None:
-        database = _load_database(root / "tracking_database.pkl")
+        database = _load_database(root, len(frame_ids))
     return TrackingOutput(manifest, frame_ids, poses, inverse, positions, database)
 
 

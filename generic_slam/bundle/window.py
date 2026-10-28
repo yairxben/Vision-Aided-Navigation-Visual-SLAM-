@@ -114,51 +114,49 @@ def _camera_pose_in_window(
     )
 
 
-def _collect_candidates(database: object, frame_ids: Tuple[int, ...]):
-    by_frame = {}
-    candidate_ids = set()
-    for frame_id in frame_ids:
-        tracks = tuple(sorted(int(value) for value in database.tracks(frame_id)))
-        if len(tracks) != len(set(tracks)) or any(value < 0 for value in tracks):
-            raise ContractError("TrackingDB returned invalid TrackIds")
-        # Only membership is asked of it; a set makes that O(1) per lookup.
-        by_frame[frame_id] = frozenset(tracks)
-        candidate_ids.update(tracks)
-    return by_frame, tuple(sorted(candidate_ids))
-
-
-def _observations(
+def _window_observations(
     database: object,
     frame_ids: Tuple[int, ...],
-    by_frame: Mapping[int, frozenset],
-    track_id: int,
     invalid_reasons: Counter,
-) -> Tuple[StereoObservation, ...]:
-    declared = tuple(
-        sorted(
-            int(value)
-            for value in database.frames(track_id)
-            if frame_ids[0] <= int(value) <= frame_ids[-1]
+) -> Tuple[Tuple[int, ...], Dict[int, Tuple[StereoObservation, ...]]]:
+    """Candidate TrackIds (ascending) and each one's valid observations in frame order."""
+
+    window = database.window_observations(frame_ids[0], frame_ids[-1])
+    track_ids = window["track_ids"]
+    links = window["links"]
+    boundaries = np.flatnonzero(np.diff(track_ids)) + 1
+    starts = np.concatenate(([0], boundaries)).astype(np.int64)
+    ends = np.concatenate((boundaries, [len(track_ids)])).astype(np.int64)
+    candidates = track_ids[starts]
+    # Every track is a consecutive frame range: its observations in the window
+    # must be exactly the overlap of that range with the window.
+    declared = (
+        np.minimum(window["track_end"][candidates], frame_ids[-1])
+        - np.maximum(window["track_start"][candidates], frame_ids[0])
+        + 1
+    )
+    if not np.array_equal(declared, ends - starts):
+        raise ContractError("tracking store track/frame membership differs")
+    finite = np.isfinite(links).all(axis=1)
+    positive = links[:, 0] - links[:, 1] > 0.0
+    for reason, count in (
+        (NONFINITE_OBSERVATION, int(np.count_nonzero(~finite))),
+        (NONPOSITIVE_DISPARITY, int(np.count_nonzero(finite & ~positive))),
+    ):
+        if count:  # reported reasons are only those that occurred
+            invalid_reasons[reason] += count
+    valid = (finite & positive).tolist()
+    frames = window["frame_ids"].tolist()
+    values = links.tolist()
+    candidate_ids = candidates.tolist()
+    observations = {}
+    for track_id, start, end in zip(candidate_ids, starts.tolist(), ends.tolist()):
+        observations[track_id] = tuple(
+            StereoObservation(frames[row], track_id, tuple(values[row]))
+            for row in range(start, end)
+            if valid[row]
         )
-    )
-    membership = tuple(
-        frame_id for frame_id in frame_ids if track_id in by_frame[frame_id]
-    )
-    if declared != membership:
-        raise ContractError("TrackingDB track/frame membership differs")
-    result = []
-    for frame_id in membership:
-        link = database.link(frame_id, track_id)
-        if link is None:
-            raise ContractError("TrackingDB observation is missing")
-        measurement = (float(link.x_left), float(link.x_right), float(link.y))
-        if not all(math.isfinite(value) for value in measurement):
-            invalid_reasons[NONFINITE_OBSERVATION] += 1
-        elif measurement[0] - measurement[1] <= 0.0:
-            invalid_reasons[NONPOSITIVE_DISPARITY] += 1
-        else:
-            result.append(StereoObservation(frame_id, track_id, measurement))
-    return tuple(result)
+    return tuple(candidate_ids), observations
 
 
 def _finite_with_positive_depth(camera_point: np.ndarray) -> bool:
@@ -311,7 +309,7 @@ def solve_bundle_window(
     if start < 0 or end <= start or end >= database.frame_num():
         raise ContractError("Bundle window endpoint range is invalid")
     if len(world_to_camera_poses) != database.frame_num():
-        raise ContractError("Bundle poses and TrackingDB frames differ")
+        raise ContractError("Bundle poses and tracking store frames differ")
     construction_started = perf_counter()
     frame_ids = tuple(range(start, end + 1))
     camera_keys = {
@@ -334,17 +332,17 @@ def solve_bundle_window(
     graph = gtsam.NonlinearFactorGraph()
     graph.add(gtsam.PriorFactorPose3(camera_keys[start], gtsam.Pose3(), anchor_noise))
 
-    by_frame, candidate_tracks = _collect_candidates(database, frame_ids)
     invalid_reasons = Counter()
+    candidate_tracks, observations_by_track = _window_observations(
+        database, frame_ids, invalid_reasons
+    )
     accepted = {}
     landmarks = {}
     initialization_frames = {}
     initialization_depths = {}
     rejected = {}
     for track_id in candidate_tracks:
-        observations = _observations(
-            database, frame_ids, by_frame, track_id, invalid_reasons
-        )
+        observations = observations_by_track[track_id]
         if (
             len(observations) < landmark_eligibility.minimum_valid_observations
             or len({item.frame_id for item in observations})

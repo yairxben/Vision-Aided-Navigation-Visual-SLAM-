@@ -1,8 +1,8 @@
 """Sequence-generic KITTI stereo SLAM pipeline.
 
 The package is fully independent of the frozen course code in
-``course_exercises/``.  The lecturer TrackingDB is vendored and wrapped under
-:mod:`generic_slam.tracking`.
+``course_exercises/``; feature tracks live in the columnar
+:class:`generic_slam.tracking.store.TrackStore`.
 """
 
 from .config import AlgorithmConfig, resolve_algorithm_config

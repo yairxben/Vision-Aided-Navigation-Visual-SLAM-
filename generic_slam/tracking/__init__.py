@@ -1,4 +1,4 @@
-"""Sequential VO and lecturer TrackingDB integration."""
+"""Sequential VO and the columnar feature-track store."""
 
 from .stage import (
     TrackingOutput,

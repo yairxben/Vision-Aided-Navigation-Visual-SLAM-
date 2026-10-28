@@ -14,7 +14,7 @@ from .contracts import ContractError
 
 
 SCIENTIFIC_IMPLEMENTATION_REVISION = (
-    "transactional-vo-refinement-loop-gauge-tolerance-v2-detector-factory"
+    "transactional-vo-refinement-loop-gauge-tolerance-v2-detector-factory-trackstore"
 )
 
 

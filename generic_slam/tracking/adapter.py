@@ -1,32 +1,31 @@
-"""Neutral raw-feature to lecturer-row adapter with supporter-only insertion."""
+"""Raw OpenCV features to tracking-store rows, with supporter-only insertion."""
 
 from __future__ import annotations
 
-import math
 from dataclasses import dataclass
-from typing import List, Sequence, Tuple
+from typing import Optional, Sequence, Tuple
 
 import cv2
 import numpy as np
 
 from ..contracts import ContractError
-from .lecturer_store import Link, NO_ID, TrackingDB
+from .store import NO_ID, TrackStore
 
 
 @dataclass(frozen=True)
 class PreparedStereoFrame:
+    """Stereo rows of one frame: one row per left feature with a stereo match."""
+
     raw_descriptor_count: int
-    filtered_descriptors: np.ndarray
-    links: Tuple[Link, ...]
-    stereo_matches: Tuple[cv2.DMatch, ...]
-    raw_to_filtered: Tuple[int, ...]
-    filtered_to_raw: Tuple[int, ...]
+    links: np.ndarray  # (rows, 3): u_left, u_right, v (mean of left/right y)
+    raw_to_filtered: np.ndarray  # row of each raw left feature, or NO_ID
+    filtered_to_raw: np.ndarray  # raw left feature of each row (ascending)
 
 
 @dataclass(frozen=True)
 class PreparedTemporalTransition:
-    matches: Tuple[cv2.DMatch, ...]
-    validity_mask: Tuple[bool, ...]
+    previous_rows: np.ndarray  # supporter pairs, ascending previous row
+    current_rows: np.ndarray
     reciprocal_candidate_count: int
     stereo_compatible_candidate_count: int
     selected_candidate_count: int
@@ -37,8 +36,13 @@ class PreparedTemporalTransition:
     rejected_conflict: int
 
 
-def _match_key(match: cv2.DMatch, original_index: int) -> Tuple[float, int, int]:
-    return float(match.distance), int(match.trainIdx), int(original_index)
+def _match_arrays(matches: Sequence[cv2.DMatch]) -> Tuple[np.ndarray, np.ndarray, np.ndarray]:
+    query = np.fromiter((match.queryIdx for match in matches), dtype=np.int64, count=len(matches))
+    train = np.fromiter((match.trainIdx for match in matches), dtype=np.int64, count=len(matches))
+    distance = np.fromiter(
+        (match.distance for match in matches), dtype=float, count=len(matches)
+    )
+    return query, train, distance
 
 
 def prepare_stereo_frame(
@@ -51,34 +55,30 @@ def prepare_stereo_frame(
     if descriptors.ndim != 2 or descriptors.shape[0] != len(left_keypoints):
         raise ContractError("left descriptors and keypoints are not row-aligned")
     if not stereo_inliers:
-        raise ContractError("TrackingDB cannot accept an empty stereo population")
-    best_by_query = {}
-    for original_index, match in enumerate(stereo_inliers):
-        query = int(match.queryIdx)
-        train = int(match.trainIdx)
-        if not 0 <= query < descriptors.shape[0] or not 0 <= train < len(right_keypoints):
-            raise ContractError("stereo match index is outside feature space")
-        previous = best_by_query.get(query)
-        if previous is None or _match_key(match, original_index) < _match_key(
-            previous[1], previous[0]
-        ):
-            best_by_query[query] = (original_index, match)
-    ordered = tuple(best_by_query[index][1] for index in sorted(best_by_query))
-    filtered_to_raw = tuple(int(match.queryIdx) for match in ordered)
-    filtered_descriptors, links = TrackingDB.create_links(
-        descriptors, tuple(left_keypoints), tuple(right_keypoints), ordered
+        raise ContractError("the tracking store cannot accept an empty stereo population")
+    query, train, distance = _match_arrays(stereo_inliers)
+    if (
+        np.any(query < 0) or np.any(query >= descriptors.shape[0])
+        or np.any(train < 0) or np.any(train >= len(right_keypoints))
+    ):
+        raise ContractError("stereo match index is outside feature space")
+    # One row per left feature: its best match by (distance, trainIdx, order).
+    order = np.lexsort((np.arange(len(query)), train, distance, query))
+    first = np.ones(len(order), dtype=bool)
+    first[1:] = query[order][1:] != query[order][:-1]
+    kept = order[first]  # ascending queryIdx
+    filtered_to_raw = query[kept]
+    left_points = np.array([left_keypoints[index].pt for index in filtered_to_raw], dtype=float)
+    right_points = np.array([right_keypoints[index].pt for index in train[kept]], dtype=float)
+    links = np.column_stack(
+        (left_points[:, 0], right_points[:, 0], (left_points[:, 1] + right_points[:, 1]) / 2)
     )
-    raw_to_filtered = [NO_ID] * descriptors.shape[0]
-    for filtered_row, raw_row in enumerate(filtered_to_raw):
-        raw_to_filtered[raw_row] = filtered_row
-    if not np.array_equal(filtered_descriptors, descriptors[list(filtered_to_raw)]):
-        raise ContractError("filtered descriptors lost raw-row ordering")
+    raw_to_filtered = np.full(descriptors.shape[0], NO_ID, dtype=np.int64)
+    raw_to_filtered[filtered_to_raw] = np.arange(len(filtered_to_raw))
     return PreparedStereoFrame(
         raw_descriptor_count=int(descriptors.shape[0]),
-        filtered_descriptors=np.asarray(filtered_descriptors).copy(),
-        links=tuple(links),
-        stereo_matches=ordered,
-        raw_to_filtered=tuple(raw_to_filtered),
+        links=links,
+        raw_to_filtered=raw_to_filtered,
         filtered_to_raw=filtered_to_raw,
     )
 
@@ -90,113 +90,86 @@ def prepare_temporal_transition(
     supporter_temporal_indices: Sequence[int],
     consensus_count: int,
 ) -> PreparedTemporalTransition:
-    """Produce one ordered DMatch/mask item per previous TrackingDB row."""
+    """Map RANSAC supporters to (previous row, current row) store pairs."""
 
-    previous_rows = len(previous.filtered_to_raw)
-    current_rows = len(current.filtered_to_raw)
-    if previous_rows == 0 or current_rows == 0 or consensus_count <= 0:
+    if len(previous.filtered_to_raw) == 0 or len(current.filtered_to_raw) == 0 or consensus_count <= 0:
         raise ContractError("transition requires nonempty rows and consensus")
-    supporter_indices = tuple(int(value) for value in supporter_temporal_indices)
-    if len(set(supporter_indices)) != len(supporter_indices):
+    supporters = np.asarray(tuple(supporter_temporal_indices), dtype=np.int64)
+    if len(np.unique(supporters)) != len(supporters):
         raise ContractError("supporter temporal indices must be unique")
-    if any(not 0 <= value < len(reciprocal_matches) for value in supporter_indices):
+    if np.any(supporters < 0) or np.any(supporters >= len(reciprocal_matches)):
         raise ContractError("supporter temporal index is out of range")
-    if len(supporter_indices) > consensus_count:
+    if len(supporters) > consensus_count:
         raise ContractError("supporter count exceeds consensus count")
-    supporter_set = set(supporter_indices)
-
-    compatible = []
-    rejected_not_stereo = 0
-    for original_index, match in enumerate(reciprocal_matches):
-        raw_query = int(match.queryIdx)
-        raw_train = int(match.trainIdx)
-        if (
-            not 0 <= raw_query < previous.raw_descriptor_count
-            or not 0 <= raw_train < current.raw_descriptor_count
-        ):
-            raise ContractError("temporal match index is outside raw feature space")
-        previous_row = previous.raw_to_filtered[raw_query]
-        current_row = current.raw_to_filtered[raw_train]
-        supporter = original_index in supporter_set
-        if previous_row == NO_ID or current_row == NO_ID:
-            if supporter:
-                raise ContractError("final supporter is not stereo-valid")
-            rejected_not_stereo += 1
-            continue
-        compatible.append(
-            (
-                float(match.distance), int(previous_row), int(current_row),
-                int(original_index), supporter,
-            )
-        )
-
-    used_previous = set()
-    used_current = set()
-    selected = []
-    rejected_conflict = 0
-    for _, previous_row, current_row, original_index, supporter in sorted(compatible):
-        if previous_row in used_previous or current_row in used_current:
-            if supporter:
-                raise ContractError("final supporter lost to deterministic row conflict")
-            rejected_conflict += 1
-            continue
-        used_previous.add(previous_row)
-        used_current.add(current_row)
-        selected.append((previous_row, current_row, original_index, supporter))
-
-    placeholder = float(np.finfo(np.float32).max)
-    complete = [
-        cv2.DMatch(
-            _queryIdx=row, _trainIdx=0, _imgIdx=0, _distance=placeholder
-        )
-        for row in range(previous_rows)
-    ]
-    valid = [False] * previous_rows
-    for previous_row, current_row, original_index, supporter in selected:
-        source = reciprocal_matches[original_index]
-        complete[previous_row] = cv2.DMatch(
-            _queryIdx=previous_row,
-            _trainIdx=current_row,
-            _imgIdx=0,
-            _distance=float(source.distance),
-        )
-        valid[previous_row] = bool(supporter)
-    destinations = [match.trainIdx for match, accepted in zip(complete, valid) if accepted]
-    if len(destinations) != len(set(destinations)) or any(
-        not 0 <= value < current_rows for value in destinations
+    query, train, distance = _match_arrays(reciprocal_matches)
+    if (
+        np.any(query < 0) or np.any(query >= previous.raw_descriptor_count)
+        or np.any(train < 0) or np.any(train >= current.raw_descriptor_count)
     ):
-        raise ContractError("supporter destinations are invalid")
-    if sum(valid) != len(supporter_indices):
+        raise ContractError("temporal match index is outside raw feature space")
+    is_supporter = np.zeros(len(query), dtype=bool)
+    is_supporter[supporters] = True
+    previous_row = previous.raw_to_filtered[query]
+    current_row = current.raw_to_filtered[train]
+    compatible = (previous_row != NO_ID) & (current_row != NO_ID)
+    if np.any(is_supporter & ~compatible):
+        raise ContractError("final supporter is not stereo-valid")
+
+    # Greedy one-to-one selection in (distance, previous row, current row,
+    # match order) order: a candidate loses if either row is already taken.
+    candidates = np.nonzero(compatible)[0]
+    candidates = candidates[np.lexsort((
+        candidates, current_row[candidates], previous_row[candidates], distance[candidates]
+    ))]
+    selected_mask = np.ones(len(candidates), dtype=bool)
+    if (
+        len(np.unique(previous_row[candidates])) != len(candidates)
+        or len(np.unique(current_row[candidates])) != len(candidates)
+    ):
+        # Reciprocal matches are one-to-one, so this loop is a safeguard only.
+        used_previous, used_current = set(), set()
+        for position, index in enumerate(candidates):
+            rows = (int(previous_row[index]), int(current_row[index]))
+            if rows[0] in used_previous or rows[1] in used_current:
+                selected_mask[position] = False
+                continue
+            used_previous.add(rows[0])
+            used_current.add(rows[1])
+    rejected_conflict = int(np.count_nonzero(~selected_mask))
+    if np.any(is_supporter[candidates[~selected_mask]]):
+        raise ContractError("final supporter lost to deterministic row conflict")
+    selected = candidates[selected_mask]
+    chosen = selected[is_supporter[selected]]
+    chosen = chosen[np.argsort(previous_row[chosen], kind="stable")]
+    if len(chosen) != len(supporters):
         raise ContractError("supporter-only validity mask differs")
     return PreparedTemporalTransition(
-        matches=tuple(complete),
-        validity_mask=tuple(valid),
-        reciprocal_candidate_count=len(reciprocal_matches),
-        stereo_compatible_candidate_count=len(compatible),
+        previous_rows=previous_row[chosen],
+        current_rows=current_row[chosen],
+        reciprocal_candidate_count=len(query),
+        stereo_compatible_candidate_count=len(candidates),
         selected_candidate_count=len(selected),
         consensus_count=int(consensus_count),
-        supporter_count=len(supporter_indices),
-        supporter_percentage=100.0 * len(supporter_indices) / consensus_count,
-        rejected_not_stereo_valid=rejected_not_stereo,
+        supporter_count=len(supporters),
+        supporter_percentage=100.0 * len(supporters) / consensus_count,
+        rejected_not_stereo_valid=int(np.count_nonzero(~compatible)),
         rejected_conflict=rejected_conflict,
     )
 
 
 class TrackingStoreAdapter:
-    """Validated sequential insertion boundary around the lecturer store."""
+    """Validated sequential insertion boundary around the tracking store."""
 
     def __init__(self) -> None:
-        self.database = TrackingDB()
+        self.database = TrackStore()
         self.last_frame = None  # type: Optional[PreparedStereoFrame]
 
     def add_initial(self, frame: PreparedStereoFrame) -> int:
         if self.last_frame is not None:
             raise ContractError("initial tracking frame already exists")
-        frame_id = self.database.add_frame(
-            list(frame.links), frame.filtered_descriptors.copy()
-        )
+        frame_id = self.database.add_frame(frame.links)
         if frame_id != 0:
-            raise ContractError("lecturer store did not issue FrameId zero")
+            raise ContractError("tracking store did not issue FrameId zero")
         self.last_frame = frame
         return frame_id
 
@@ -217,39 +190,15 @@ class TrackingStoreAdapter:
             consensus_count,
         )
         frame_id = self.database.add_frame(
-            list(frame.links),
-            frame.filtered_descriptors.copy(),
-            list(prepared.matches),
-            list(prepared.validity_mask),
+            frame.links, prepared.previous_rows, prepared.current_rows
         )
         if frame_id != self.database.frame_num() - 1:
-            raise ContractError("lecturer FrameId issuance is not consecutive")
+            raise ContractError("tracking FrameId issuance is not consecutive")
         self.last_frame = frame
         return frame_id, prepared
 
 
-def validate_tracking_store(database: TrackingDB, expected_frame_count: int) -> None:
-    if database.frame_num() != expected_frame_count:
-        raise ContractError("tracking store frame count differs")
-    if tuple(database.all_frames()) != tuple(range(expected_frame_count)):
-        raise ContractError("tracking store FrameIds are not dense from zero")
-    for frame_id in database.all_frames():
-        features = database.features(frame_id)
-        rows = database.frameId_to_trackIds_list.get(frame_id)
-        if features is None or features.ndim != 2 or rows is None:
-            raise ContractError("tracking store lacks frame rows")
-        if features.shape[0] != len(rows):
-            raise ContractError("tracking descriptor and TrackId rows differ")
-    for track_id in database.all_tracks():
-        frames = database.frames(track_id)
-        if len(frames) < 2 or frames != list(range(frames[0], frames[-1] + 1)):
-            raise ContractError("tracking store contains a nonconsecutive track")
-        for frame_id in frames:
-            link = database.link(frame_id, track_id)
-            if link is None:
-                raise ContractError("tracking store track lacks an observation")
-            values = (float(link.x_left), float(link.x_right), float(link.y))
-            if not all(math.isfinite(value) for value in values) or not (
-                link.x_left > link.x_right
-            ):
-                raise ContractError("tracking observation violates stereo policy")
+__all__ = [
+    "PreparedStereoFrame", "PreparedTemporalTransition", "TrackingStoreAdapter",
+    "prepare_stereo_frame", "prepare_temporal_transition",
+]
