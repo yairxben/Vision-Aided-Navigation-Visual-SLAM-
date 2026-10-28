@@ -37,6 +37,8 @@ Every stage (tracking database, keyframes, Bundle windows, Pose Graph, Loop Clos
 
 Readable results (`summary.md`, figures, statistics, config) are copied to `results/<run>_<timestamp>/`.
 
+Current defaults on KITTI 00 (AKAZE, temporal matching on stereo rows only): about 30 min end to end, RMSE with loops ≈ 2.1 m, 5 real loops. Speed-only changes are proven bit-identical with `tools/compare_runs.py`; changes that alter results are judged with two RANSAC seeds, because the seed alone moves RMSE by up to ~5–8%. Experiments and their outcomes: [`configs/experiments/README.md`](configs/experiments/README.md).
+
 `course_exercises/` is the frozen course code. Its files are byte-identical to the submitted versions, so recorded source hashes stay valid. Run its scripts and tests from inside that folder (for example `cd course_exercises && python ex7.py`). It expects `dataset/` and `diagnostics/` inside `course_exercises/`.
 
 ---

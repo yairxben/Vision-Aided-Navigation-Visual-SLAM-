@@ -47,10 +47,12 @@ DEFAULT_ALGORITHM_CONFIG: Dict[str, Any] = {
         },
         "temporal_matching": {
             # Which left features tracking matches between consecutive frames.
-            # "all_features": every detected feature (the original behaviour).
             # "stereo_rows": only stereo-inlier features, the only ones the
             # four-view consensus can use; ~3x cheaper as matching is quadratic.
-            "population": "all_features",
+            # On KITTI 00: tracking 21.2 -> 15.5 min, +1.1% supporters, RMSE
+            # within the RANSAC seed noise (2 seeds; configs/experiments).
+            # "all_features": every detected feature (the original behaviour).
+            "population": "stereo_rows",
         },
     },
     "visual_odometry": {
