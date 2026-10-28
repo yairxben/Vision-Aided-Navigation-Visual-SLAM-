@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import hashlib
 import json
+import os
 import re
 from dataclasses import dataclass
 from pathlib import Path
@@ -26,14 +27,27 @@ def normalize_sequence_id(value: str) -> str:
     return text.zfill(2)
 
 
+def _entry_is_file(entry: os.DirEntry) -> bool:
+    # Path.is_file() semantics: follow symlinks, and treat errors as "not a file".
+    try:
+        return entry.is_file()
+    except OSError:
+        return False
+
+
 def _discover_image_directory(path: Path) -> Tuple[Dict[int, Path], Tuple[str, ...]]:
     if not path.is_dir():
         raise ContractError("KITTI image directory is missing: {}".format(path))
     images: Dict[int, Path] = {}
     ignored = []
-    for item in sorted(path.iterdir(), key=lambda candidate: candidate.name):
-        match = CANONICAL_IMAGE_NAME.fullmatch(item.name)
-        if item.is_file() and match is not None:
+    # scandir reports each entry's type with the listing; Path.is_file() would
+    # stat every image (~3 ms each on a Windows-mounted dataset, in every stage).
+    with os.scandir(str(path)) as listing:
+        entries = sorted(listing, key=lambda candidate: candidate.name)
+    for entry in entries:
+        item = path / entry.name
+        match = CANONICAL_IMAGE_NAME.fullmatch(entry.name)
+        if _entry_is_file(entry) and match is not None:
             frame_id = int(match.group(1))
             if frame_id in images:
                 raise ContractError("duplicate canonical FrameId {}".format(frame_id))

@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import math
 from dataclasses import dataclass
 from typing import List, Sequence, Tuple
 
@@ -247,6 +248,8 @@ def validate_tracking_store(database: TrackingDB, expected_frame_count: int) -> 
             link = database.link(frame_id, track_id)
             if link is None:
                 raise ContractError("tracking store track lacks an observation")
-            values = np.asarray([link.x_left, link.x_right, link.y], dtype=float)
-            if not np.all(np.isfinite(values)) or not link.x_left > link.x_right:
+            values = (float(link.x_left), float(link.x_right), float(link.y))
+            if not all(math.isfinite(value) for value in values) or not (
+                link.x_left > link.x_right
+            ):
                 raise ContractError("tracking observation violates stereo policy")
