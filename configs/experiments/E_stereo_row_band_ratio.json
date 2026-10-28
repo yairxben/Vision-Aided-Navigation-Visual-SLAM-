@@ -1,0 +1,9 @@
+{
+  "frontend": {
+    "stereo": {
+      "matching": "row_band",
+      "row_band_uniqueness": "ratio",
+      "row_band_ratio": 0.8
+    }
+  }
+}

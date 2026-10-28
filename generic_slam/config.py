@@ -20,6 +20,8 @@ SCIENTIFIC_IMPLEMENTATION_REVISION = (
 
 FEATURE_DETECTORS = ("akaze", "sift")
 TEMPORAL_MATCHING_POPULATIONS = ("all_features", "stereo_rows")
+STEREO_MATCHING_MODES = ("global_nearest", "row_band")
+ROW_BAND_UNIQUENESS_TESTS = ("mutual", "ratio")
 
 
 DEFAULT_ALGORITHM_CONFIG: Dict[str, Any] = {
@@ -44,6 +46,14 @@ DEFAULT_ALGORITHM_CONFIG: Dict[str, Any] = {
         "stereo": {
             "maximum_vertical_deviation_px": 2.0,
             "require_positive_disparity": True,
+            # "global_nearest": each left feature's nearest right descriptor in
+            # the whole image, kept only if it passes the row/disparity check.
+            # "row_band": nearest among right features that pass the check
+            # (cheaper), filtered by row_band_uniqueness: "mutual" (one-to-one
+            # within the band) or "ratio" (best < row_band_ratio * second best).
+            "matching": "global_nearest",
+            "row_band_uniqueness": "mutual",
+            "row_band_ratio": 0.8,
         },
         "temporal_matching": {
             # Which left features tracking matches between consecutive frames.
@@ -208,6 +218,19 @@ def validate_algorithm_config(config: Mapping[str, Any]) -> None:
     )
     if not isinstance(frontend["stereo"]["require_positive_disparity"], bool):
         raise ContractError("frontend.stereo.require_positive_disparity must be boolean")
+    if frontend["stereo"]["matching"] not in STEREO_MATCHING_MODES:
+        raise ContractError(
+            "frontend.stereo.matching must be one of {}".format(", ".join(STEREO_MATCHING_MODES))
+        )
+    if frontend["stereo"]["row_band_uniqueness"] not in ROW_BAND_UNIQUENESS_TESTS:
+        raise ContractError(
+            "frontend.stereo.row_band_uniqueness must be one of {}".format(
+                ", ".join(ROW_BAND_UNIQUENESS_TESTS)
+            )
+        )
+    ratio = _number(frontend["stereo"]["row_band_ratio"], "frontend.stereo.row_band_ratio")
+    if not 0.0 < ratio <= 1.0:
+        raise ContractError("frontend.stereo.row_band_ratio must be in (0, 1]")
     if frontend["temporal_matching"]["population"] not in TEMPORAL_MATCHING_POPULATIONS:
         raise ContractError(
             "frontend.temporal_matching.population must be one of {}".format(

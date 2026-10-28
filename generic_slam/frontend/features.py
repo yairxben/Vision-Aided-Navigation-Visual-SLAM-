@@ -92,6 +92,9 @@ class FeatureFrontend:
         self.require_positive_disparity = bool(
             stereo["require_positive_disparity"]
         )
+        self.stereo_matching = str(stereo["matching"])
+        self.row_band_uniqueness = str(stereo["row_band_uniqueness"])
+        self.row_band_ratio = float(stereo["row_band_ratio"])
 
     def create_matcher(self) -> cv2.DescriptorMatcher:
         """Create an independent matcher whose norm fits the descriptor type.
@@ -145,6 +148,11 @@ class FeatureFrontend:
         )
         left = self.extract(left_image, "left stereo image")
         right = right_future.result()
+        if self.stereo_matching == "row_band":
+            return StereoFeatures(
+                left=left, right=right, inliers=self._row_band_matches(left, right),
+                outliers=(),
+            )
         inliers = []
         outliers = []
         for match in self.one_way_matches(left.descriptors, right.descriptors):
@@ -164,6 +172,93 @@ class FeatureFrontend:
             right=right,
             inliers=tuple(sorted(inliers, key=lambda item: item.queryIdx)),
             outliers=tuple(sorted(outliers, key=lambda item: item.queryIdx)),
+        )
+
+    # Left features are processed in horizontal stripes of this height; each
+    # stripe is compared only with right features within the vertical tolerance.
+    ROW_BAND_STRIPE_PX = 8.0
+
+    def _row_band_candidates(
+        self, left: ImageFeatures, right: ImageFeatures
+    ) -> Tuple[np.ndarray, np.ndarray, np.ndarray]:
+        """Every (left, right, distance) pair that passes the stereo geometry."""
+
+        left_points = np.array([keypoint.pt for keypoint in left.keypoints], dtype=float)
+        right_points = np.array([keypoint.pt for keypoint in right.keypoints], dtype=float)
+        tolerance = self.maximum_vertical_deviation_px
+        right_order = np.argsort(right_points[:, 1], kind="stable")
+        right_y = right_points[right_order, 1]
+        stripes = np.floor(left_points[:, 1] / self.ROW_BAND_STRIPE_PX).astype(np.int64)
+        binary = left.descriptors.dtype == np.uint8 and self.detector_type == "akaze"
+        norm, dtype = (cv2.NORM_HAMMING, cv2.CV_32S) if binary else (cv2.NORM_L2, cv2.CV_32F)
+        queries, trains, distances = [], [], []
+        for stripe in np.unique(stripes):
+            left_rows = np.nonzero(stripes == stripe)[0]
+            low = np.searchsorted(right_y, stripe * self.ROW_BAND_STRIPE_PX - tolerance, "left")
+            high = np.searchsorted(
+                right_y, (stripe + 1) * self.ROW_BAND_STRIPE_PX + tolerance, "right"
+            )
+            right_rows = right_order[low:high]
+            if len(right_rows) == 0:
+                continue
+            sorted_distance, sorted_index = cv2.batchDistance(
+                left.descriptors[left_rows], right.descriptors[right_rows], dtype,
+                normType=norm, K=len(right_rows),
+            )
+            distance = np.empty(sorted_distance.shape, dtype=float)
+            np.put_along_axis(distance, sorted_index.astype(np.int64), sorted_distance, axis=1)
+            dy = np.abs(left_points[left_rows, 1][:, None] - right_points[right_rows, 1][None, :])
+            valid = dy <= tolerance
+            if self.require_positive_disparity:
+                valid &= left_points[left_rows, 0][:, None] - right_points[right_rows, 0][None, :] > 0.0
+            rows, columns = np.nonzero(valid)
+            queries.append(left_rows[rows])
+            trains.append(right_rows[columns])
+            distances.append(distance[rows, columns])
+        if not queries:
+            empty = np.empty(0, dtype=np.int64)
+            return empty, empty, np.empty(0, dtype=float)
+        return np.concatenate(queries), np.concatenate(trains), np.concatenate(distances)
+
+    def _row_band_matches(
+        self, left: ImageFeatures, right: ImageFeatures
+    ) -> Tuple[cv2.DMatch, ...]:
+        """Nearest geometrically valid right feature per left feature, made unique.
+
+        Ties break toward the lower feature index. "mutual" keeps a pair only
+        if the left feature is also the right feature's nearest valid partner;
+        "ratio" keeps it when best < ratio * second best (or it is the only one).
+        """
+
+        query, train, distance = self._row_band_candidates(left, right)
+        if len(query) == 0:
+            return ()
+        by_left = np.lexsort((train, distance, query))
+        first = np.ones(len(by_left), dtype=bool)
+        first[1:] = query[by_left][1:] != query[by_left][:-1]
+        best = by_left[first]  # one candidate per left feature, ascending query
+        if self.row_band_uniqueness == "mutual":
+            by_right = np.lexsort((query, distance, train))
+            first_right = np.ones(len(by_right), dtype=bool)
+            first_right[1:] = train[by_right][1:] != train[by_right][:-1]
+            best_left_of_right = dict(
+                zip(train[by_right][first_right].tolist(), query[by_right][first_right].tolist())
+            )
+            keep = np.array(
+                [best_left_of_right[t] == q for q, t in zip(query[best].tolist(), train[best].tolist())],
+                dtype=bool,
+            )
+        else:
+            group_start = np.flatnonzero(first)
+            group_size = np.diff(np.append(group_start, len(by_left)))
+            second = np.full(len(best), np.inf)
+            has_second = group_size > 1
+            second[has_second] = distance[by_left[group_start[has_second] + 1]]
+            keep = distance[best] < self.row_band_ratio * second
+        chosen = best[keep]
+        return tuple(
+            cv2.DMatch(int(q), int(t), 0, float(d))
+            for q, t, d in zip(query[chosen], train[chosen], distance[chosen])
         )
 
     def reciprocal_matches(

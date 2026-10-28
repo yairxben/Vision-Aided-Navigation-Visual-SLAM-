@@ -1,0 +1,8 @@
+{
+  "frontend": {
+    "stereo": {
+      "matching": "row_band",
+      "row_band_uniqueness": "mutual"
+    }
+  }
+}
