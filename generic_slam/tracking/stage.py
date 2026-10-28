@@ -11,7 +11,7 @@ from collections import deque
 from concurrent.futures import ThreadPoolExecutor
 from dataclasses import dataclass
 from pathlib import Path
-from typing import Dict, List, Mapping, Optional, Tuple
+from typing import Dict, Iterator, List, Mapping, Optional, Tuple
 from uuid import uuid4
 
 import numpy as np
@@ -89,6 +89,34 @@ class TrackingOutput(TrackingTrajectoryOutput):
 def _peak_rss_bytes() -> int:
     # Linux ru_maxrss is KiB; this repository's supported execution platform is Linux.
     return int(resource.getrusage(resource.RUSAGE_SELF).ru_maxrss) * 1024
+
+
+def _stereo_frames(
+    dataset: KittiEstimationContext, frontend: FeatureFrontend, frame_count: int
+) -> Iterator[StereoFeatures]:
+    """Yield frames 0..frame_count-1 in order, one frame ahead when possible.
+
+    With a deterministic frontend, frame k+1 is read and extracted on a helper
+    thread while the caller processes frame k (causal: it is the newest frame
+    that has arrived). FLANN draws from OpenCV's thread-local RNG, so a
+    non-deterministic frontend is extracted on the caller's thread as before.
+    """
+
+    def load(frame_id: int) -> StereoFeatures:
+        left_image, right_image = dataset.read_stereo(frame_id)
+        return frontend.extract_stereo(left_image, right_image)
+
+    if not frontend.is_deterministic:
+        for frame_id in range(frame_count):
+            yield load(frame_id)
+        return
+    with ThreadPoolExecutor(max_workers=1, thread_name_prefix="frame-prefetch") as pool:
+        pending = pool.submit(load, 0)
+        for frame_id in range(frame_count):
+            stereo = pending.result()
+            if frame_id + 1 < frame_count:
+                pending = pool.submit(load, frame_id + 1)
+            yield stereo
 
 
 def _prepared(stereo: StereoFeatures) -> PreparedStereoFrame:
@@ -287,8 +315,8 @@ def run_tracking_stage(
         transitions = []
         world_to_camera = [initial_left.copy()]
 
-        left_image, right_image = dataset.read_stereo(0)
-        previous_stereo = frontend.extract_stereo(left_image, right_image)
+        frames = _stereo_frames(dataset, frontend, frame_count)
+        previous_stereo = next(frames)
         previous_prepared = _prepared(previous_stereo)
         adapter.add_initial(previous_prepared)
         evidence_root = attempt / "transition_evidence"
@@ -315,8 +343,7 @@ def run_tracking_stage(
                 previous_right_rotation,
                 previous_right_translation,
             )
-            left_image, right_image = dataset.read_stereo(current_frame_id)
-            current_stereo = frontend.extract_stereo(left_image, right_image)
+            current_stereo = next(frames)
             current_prepared = _prepared(current_stereo)
             if match_stereo_rows_only:
                 reciprocal = frontend.reciprocal_matches_on_rows(
