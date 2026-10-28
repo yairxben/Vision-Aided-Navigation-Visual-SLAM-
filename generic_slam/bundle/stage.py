@@ -124,13 +124,28 @@ def _window_arrays(result: BundleWindowResult):
 
 
 def _projection_rows(result: BundleWindowResult):
+    # Whole-window array arithmetic (elementwise, so bit-identical to per-row),
+    # then Python floats: csv's str() of numpy scalars is several times slower.
+    records = result.projection_records
+    measurements = np.asarray(
+        [record.measurement for record in records], dtype=float
+    ).reshape(-1, 3)
+    initial_residuals = np.asarray(result.initial_residuals, dtype=float).reshape(-1, 3)
+    final_residuals = np.asarray(result.final_residuals, dtype=float).reshape(-1, 3)
+    initial_projections = (measurements + initial_residuals).tolist()
+    final_projections = (measurements + final_residuals).tolist()
+    initial_errors = np.asarray(result.initial_projection_errors, dtype=float).tolist()
+    final_errors = np.asarray(result.final_projection_errors, dtype=float).tolist()
+    measurements = measurements.tolist()
+    initial_residuals = initial_residuals.tolist()
+    final_residuals = final_residuals.tolist()
     rows = []
-    for index, record in enumerate(result.projection_records):
-        measurement = np.asarray(record.measurement, dtype=float)
-        initial_residual = result.initial_residuals[index]
-        final_residual = result.final_residuals[index]
-        initial_projection = measurement + initial_residual
-        final_projection = measurement + final_residual
+    for index, record in enumerate(records):
+        measurement = measurements[index]
+        initial_residual = initial_residuals[index]
+        final_residual = final_residuals[index]
+        initial_projection = initial_projections[index]
+        final_projection = final_projections[index]
         rows.append(
             {
                 "factor_index": record.factor_index,
@@ -151,8 +166,8 @@ def _projection_rows(result: BundleWindowResult):
                 "final_residual_u_left_px": final_residual[0],
                 "final_residual_u_right_px": final_residual[1],
                 "final_residual_v_mean_px": final_residual[2],
-                "initial_factor_error": result.initial_projection_errors[index],
-                "final_factor_error": result.final_projection_errors[index],
+                "initial_factor_error": initial_errors[index],
+                "final_factor_error": final_errors[index],
             }
         )
     return rows

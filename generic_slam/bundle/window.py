@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import math
 from collections import Counter, deque
 from dataclasses import dataclass
 from time import perf_counter
@@ -120,7 +121,8 @@ def _collect_candidates(database: object, frame_ids: Tuple[int, ...]):
         tracks = tuple(sorted(int(value) for value in database.tracks(frame_id)))
         if len(tracks) != len(set(tracks)) or any(value < 0 for value in tracks):
             raise ContractError("TrackingDB returned invalid TrackIds")
-        by_frame[frame_id] = tracks
+        # Only membership is asked of it; a set makes that O(1) per lookup.
+        by_frame[frame_id] = frozenset(tracks)
         candidate_ids.update(tracks)
     return by_frame, tuple(sorted(candidate_ids))
 
@@ -128,7 +130,7 @@ def _collect_candidates(database: object, frame_ids: Tuple[int, ...]):
 def _observations(
     database: object,
     frame_ids: Tuple[int, ...],
-    by_frame: Mapping[int, Tuple[int, ...]],
+    by_frame: Mapping[int, frozenset],
     track_id: int,
     invalid_reasons: Counter,
 ) -> Tuple[StereoObservation, ...]:
@@ -149,18 +151,19 @@ def _observations(
         link = database.link(frame_id, track_id)
         if link is None:
             raise ContractError("TrackingDB observation is missing")
-        measurement = np.asarray([link.x_left, link.x_right, link.y], dtype=float)
-        if not np.all(np.isfinite(measurement)):
+        measurement = (float(link.x_left), float(link.x_right), float(link.y))
+        if not all(math.isfinite(value) for value in measurement):
             invalid_reasons[NONFINITE_OBSERVATION] += 1
         elif measurement[0] - measurement[1] <= 0.0:
             invalid_reasons[NONPOSITIVE_DISPARITY] += 1
         else:
-            result.append(
-                StereoObservation(
-                    frame_id, track_id, tuple(float(value) for value in measurement)
-                )
-            )
+            result.append(StereoObservation(frame_id, track_id, measurement))
     return tuple(result)
+
+
+def _finite_with_positive_depth(camera_point: np.ndarray) -> bool:
+    x, y, z = (float(value) for value in np.asarray(camera_point).reshape(3))
+    return math.isfinite(x) and math.isfinite(y) and math.isfinite(z) and z > 0.0
 
 
 def _initialize_landmark(
@@ -192,8 +195,7 @@ def _initialize_landmark(
             continue
         saw_finite = True
         if all(
-            np.all(np.isfinite(camera_poses[item.frame_id].transformTo(point)))
-            and float(np.asarray(camera_poses[item.frame_id].transformTo(point))[2]) > 0.0
+            _finite_with_positive_depth(camera_poses[item.frame_id].transformTo(point))
             for item in observations
         ):
             return point, observation.frame_id, depth, ""
@@ -230,6 +232,21 @@ def _connectivity(
     return camera_degrees, landmark_degrees
 
 
+RESIDUAL_AGREEMENT_ATOL = float(np.finfo(float).eps * 128)
+
+
+def _all_close(first: Sequence[float], second: Sequence[float]) -> bool:
+    """``np.allclose(first, second, rtol=0, atol=RESIDUAL_AGREEMENT_ATOL)``.
+
+    Same semantics (NaN never close, equal infinities close) on a few Python
+    floats; numpy's per-call overhead made this a third of Bundle's runtime.
+    """
+
+    return all(
+        a == b or abs(a - b) <= RESIDUAL_AGREEMENT_ATOL for a, b in zip(first, second)
+    )
+
+
 def _projection_evidence(
     records: Tuple[ProjectionFactorRecord, ...],
     graph: gtsam.NonlinearFactorGraph,
@@ -257,13 +274,12 @@ def _projection_evidence(
             residual = factor_residual
         else:
             residual = projection - np.asarray(record.measurement, dtype=float)
-            if not np.allclose(
-                residual, factor_residual, rtol=0.0,
-                atol=np.finfo(float).eps * 128,
-            ):
+            if not _all_close(residual.tolist(), factor_residual.tolist()):
                 raise ContractError("direct and GTSAM projection residuals differ")
         factor_error = float(graph.at(record.factor_index).error(values))
-        if not np.all(np.isfinite(factor_residual)) or not np.isfinite(factor_error):
+        if not all(math.isfinite(value) for value in factor_residual.tolist()) or not (
+            math.isfinite(factor_error)
+        ):
             raise ContractError("Bundle projection evidence is nonfinite")
         residuals.append(residual)
         errors.append(factor_error)

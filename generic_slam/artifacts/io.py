@@ -49,10 +49,11 @@ def write_csv_atomic(
     temporary = _temporary_path(destination)
     try:
         with temporary.open("w", encoding="utf-8", newline="") as handle:
-            writer = csv.DictWriter(handle, fieldnames=fieldnames, lineterminator="\n")
-            writer.writeheader()
-            for row in rows:
-                writer.writerow({name: row.get(name) for name in fieldnames})
+            # Same output as csv.DictWriter (missing keys become empty fields)
+            # without its per-row dictionary rebuild.
+            writer = csv.writer(handle, lineterminator="\n")
+            writer.writerow(fieldnames)
+            writer.writerows([row.get(name) for name in fieldnames] for row in rows)
         os.replace(str(temporary), str(destination))
     finally:
         if temporary.exists():
