@@ -97,6 +97,7 @@ class CovarianceGraph:
             frame_id: tuple(sorted(items, key=lambda item: (item.end_frame_id, item.edge_index)))
             for frame_id, items in adjacency.items()
         }
+        self._searches: Dict[int, _CovarianceSearch] = {}
 
     @classmethod
     def consecutive(
@@ -162,47 +163,78 @@ class CovarianceGraph:
                 source_frame_id, target_frame_id, (source_frame_id,), (),
                 np.zeros((6, 6)), 0.0, float("-inf"),
             )
-        best_covariance = {source_frame_id: np.zeros((6, 6), dtype=float)}
-        best_logdet = {source_frame_id: float("-inf")}
-        predecessor = {}
-        settled = set()
-        queue = [(float("-inf"), source_frame_id)]
-        while queue:
-            queued_cost, frame_id = heapq.heappop(queue)
-            if frame_id in settled or queued_cost != best_logdet.get(frame_id):
-                continue
-            settled.add(frame_id)
-            if frame_id == target_frame_id:
-                break
-            for edge in self.adjacency[frame_id]:
-                if edge.end_frame_id in settled:
-                    continue
-                candidate = best_covariance[frame_id] + edge.covariance
-                sign, cost = np.linalg.slogdet(candidate)
-                if sign <= 0.0 or not np.isfinite(cost):
-                    raise ContractError("accumulated path covariance is invalid")
-                if cost < best_logdet.get(edge.end_frame_id, float("inf")):
-                    best_covariance[edge.end_frame_id] = candidate
-                    best_logdet[edge.end_frame_id] = float(cost)
-                    predecessor[edge.end_frame_id] = (frame_id, edge.edge_index)
-                    heapq.heappush(queue, (float(cost), edge.end_frame_id))
-        if target_frame_id not in settled:
+        # Scoring asks every earlier keyframe for a path to each new current,
+        # so each source keeps its search and resumes it: O(n^2) instead of
+        # O(n^3) slogdet calls over a run. Graphs are immutable and a loop edge
+        # creates a new instance, so a search never sees a changed graph.
+        search = self._searches.get(source_frame_id)
+        if search is None:
+            search = self._searches[source_frame_id] = _CovarianceSearch(source_frame_id)
+        try:
+            self._advance_search(search, target_frame_id)
+        except Exception:
+            del self._searches[source_frame_id]
+            raise
+        if target_frame_id not in search.settled:
             raise ContractError("no directed covariance path exists")
         frames = [target_frame_id]
         edge_indices = []
         cursor = target_frame_id
         while cursor != source_frame_id:
-            cursor, edge_index = predecessor[cursor]
+            cursor, edge_index = search.predecessor[cursor]
             frames.append(cursor)
             edge_indices.append(edge_index)
         frames.reverse()
         edge_indices.reverse()
-        covariance = np.asarray(best_covariance[target_frame_id], dtype=float)
+        covariance = np.array(search.best_covariance[target_frame_id], dtype=float)
         determinant = float(np.linalg.det(covariance))
         return CovariancePath(
             source_frame_id, target_frame_id, tuple(frames), tuple(edge_indices),
-            covariance, determinant, best_logdet[target_frame_id],
+            covariance, determinant, search.best_logdet[target_frame_id],
         )
+
+    def _advance_search(self, search: "_CovarianceSearch", target_frame_id: int) -> None:
+        """Continue Dijkstra until ``target_frame_id`` is settled or unreachable.
+
+        A settled frame's edges are relaxed only when the search continues, so
+        pausing at one target and resuming toward a later one performs exactly
+        the pops and relaxations of a fresh search to the later target.
+        """
+
+        while target_frame_id not in search.settled:
+            if search.unrelaxed is not None:
+                frame_id, search.unrelaxed = search.unrelaxed, None
+                for edge in self.adjacency[frame_id]:
+                    if edge.end_frame_id in search.settled:
+                        continue
+                    candidate = search.best_covariance[frame_id] + edge.covariance
+                    sign, cost = np.linalg.slogdet(candidate)
+                    if sign <= 0.0 or not np.isfinite(cost):
+                        raise ContractError("accumulated path covariance is invalid")
+                    if cost < search.best_logdet.get(edge.end_frame_id, float("inf")):
+                        search.best_covariance[edge.end_frame_id] = candidate
+                        search.best_logdet[edge.end_frame_id] = float(cost)
+                        search.predecessor[edge.end_frame_id] = (frame_id, edge.edge_index)
+                        heapq.heappush(search.queue, (float(cost), edge.end_frame_id))
+            if not search.queue:
+                return
+            queued_cost, frame_id = heapq.heappop(search.queue)
+            if frame_id in search.settled or queued_cost != search.best_logdet.get(frame_id):
+                continue
+            search.settled.add(frame_id)
+            search.unrelaxed = frame_id
+
+
+class _CovarianceSearch:
+    """Paused single-source Dijkstra state owned by one CovarianceGraph."""
+
+    def __init__(self, source_frame_id: int) -> None:
+        self.best_covariance = {source_frame_id: np.zeros((6, 6), dtype=float)}
+        self.best_logdet = {source_frame_id: float("-inf")}
+        self.predecessor: Dict[int, Tuple[int, int]] = {}
+        self.settled = set()
+        self.queue = [(float("-inf"), source_frame_id)]
+        self.unrelaxed: Optional[int] = None
 
 
 def score_candidate(

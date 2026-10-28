@@ -90,12 +90,15 @@ def project_points(
         points = points.T
     if len(rotations) != len(translations):
         raise ContractError("rotation and translation populations differ")
-    pixels = np.zeros((len(rotations), 2, points.shape[1]), dtype=float)
-    intrinsic = np.asarray(intrinsic, dtype=float)
-    for ordinal, (rotation, translation) in enumerate(zip(rotations, translations)):
-        projection = intrinsic @ (
-            np.asarray(rotation, dtype=float) @ points
-            + np.asarray(translation, dtype=float).reshape(3, 1)
-        )
-        pixels[ordinal] = (projection / (projection[2] + PROJECTION_EPSILON))[:2]
-    return pixels
+    if not rotations:
+        return np.zeros((0, 2, points.shape[1]), dtype=float)
+    # One stacked product per step instead of a Python loop over cameras.
+    stacked_rotations = np.stack([np.asarray(rotation, dtype=float) for rotation in rotations])
+    stacked_translations = np.stack(
+        [np.asarray(translation, dtype=float).reshape(3, 1) for translation in translations]
+    )
+    projection = np.matmul(
+        np.asarray(intrinsic, dtype=float),
+        np.matmul(stacked_rotations, points) + stacked_translations,
+    )
+    return (projection / (projection[:, 2:3] + PROJECTION_EPSILON))[:, :2]

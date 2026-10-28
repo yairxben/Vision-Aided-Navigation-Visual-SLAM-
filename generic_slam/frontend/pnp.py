@@ -169,21 +169,31 @@ def build_four_camera_model(
     )
 
 
+_IDENTITY_3 = np.eye(3)
+
+
 def model_is_valid(model: CameraModel) -> bool:
     if len(model.rotations) != 4 or len(model.translations) != 4:
         return False
-    for rotation, translation in zip(model.rotations, model.translations):
-        rotation = np.asarray(rotation, dtype=float)
-        translation = np.asarray(translation, dtype=float)
-        if rotation.shape != (3, 3) or translation.shape not in ((3,), (3, 1)):
-            return False
-        if not np.all(np.isfinite(rotation)) or not np.all(np.isfinite(translation)):
-            return False
-        if not np.allclose(rotation.T @ rotation, np.eye(3), atol=1e-5, rtol=0.0):
-            return False
-        if not np.isclose(np.linalg.det(rotation), 1.0, atol=1e-5, rtol=0.0):
-            return False
-    return True
+    rotations = [np.asarray(rotation, dtype=float) for rotation in model.rotations]
+    translations = [
+        np.asarray(translation, dtype=float) for translation in model.translations
+    ]
+    if any(rotation.shape != (3, 3) for rotation in rotations) or any(
+        translation.shape not in ((3,), (3, 1)) for translation in translations
+    ):
+        return False
+    rotations = np.stack(rotations)
+    if not np.isfinite(rotations).all() or not np.isfinite(
+        np.concatenate([translation.reshape(3) for translation in translations])
+    ).all():
+        return False
+    # All four cameras at once. For finite values allclose/isclose with
+    # rtol=0 are exactly |a - b| <= atol, without their per-call overhead.
+    orthonormality = np.matmul(rotations.transpose(0, 2, 1), rotations)
+    if not (np.abs(orthonormality - _IDENTITY_3) <= 1e-5).all():
+        return False
+    return bool((np.abs(np.linalg.det(rotations) - 1.0) <= 1e-5).all())
 
 
 def supporter_indices(

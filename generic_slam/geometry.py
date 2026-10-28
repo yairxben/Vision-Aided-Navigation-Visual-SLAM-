@@ -32,14 +32,20 @@ def homogeneous(matrix: np.ndarray) -> np.ndarray:
     return result
 
 
+_IDENTITY_3 = np.eye(3)
+_HOMOGENEOUS_ROW = np.array([0.0, 0.0, 0.0, 1.0])
+
+
 def validate_rigid_pose(matrix: np.ndarray, atol: float = 1e-9) -> np.ndarray:
     value = homogeneous(matrix)
     rotation = value[:3, :3]
-    if not np.allclose(rotation.T @ rotation, np.eye(3), rtol=0.0, atol=atol):
+    # homogeneous() guarantees finite values, for which allclose/isclose with
+    # rtol=0 are exactly |a - b| <= atol (this runs ~10^5 times per stage).
+    if not (np.abs(rotation.T @ rotation - _IDENTITY_3) <= atol).all():
         raise ContractError("pose rotation is not orthonormal")
-    if not np.isclose(np.linalg.det(rotation), 1.0, rtol=0.0, atol=atol):
+    if not abs(np.linalg.det(rotation) - 1.0) <= atol:
         raise ContractError("pose rotation determinant is not one")
-    if not np.allclose(value[3], [0.0, 0.0, 0.0, 1.0], rtol=0.0, atol=atol):
+    if not (np.abs(value[3] - _HOMOGENEOUS_ROW) <= atol).all():
         raise ContractError("pose homogeneous row is invalid")
     return value
 
