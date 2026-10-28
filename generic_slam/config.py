@@ -19,6 +19,7 @@ SCIENTIFIC_IMPLEMENTATION_REVISION = (
 
 
 FEATURE_DETECTORS = ("akaze", "sift")
+TEMPORAL_MATCHING_POPULATIONS = ("all_features", "stereo_rows")
 
 
 DEFAULT_ALGORITHM_CONFIG: Dict[str, Any] = {
@@ -43,6 +44,13 @@ DEFAULT_ALGORITHM_CONFIG: Dict[str, Any] = {
         "stereo": {
             "maximum_vertical_deviation_px": 2.0,
             "require_positive_disparity": True,
+        },
+        "temporal_matching": {
+            # Which left features tracking matches between consecutive frames.
+            # "all_features": every detected feature (the original behaviour).
+            # "stereo_rows": only stereo-inlier features, the only ones the
+            # four-view consensus can use; ~3x cheaper as matching is quadratic.
+            "population": "all_features",
         },
     },
     "visual_odometry": {
@@ -198,6 +206,12 @@ def validate_algorithm_config(config: Mapping[str, Any]) -> None:
     )
     if not isinstance(frontend["stereo"]["require_positive_disparity"], bool):
         raise ContractError("frontend.stereo.require_positive_disparity must be boolean")
+    if frontend["temporal_matching"]["population"] not in TEMPORAL_MATCHING_POPULATIONS:
+        raise ContractError(
+            "frontend.temporal_matching.population must be one of {}".format(
+                ", ".join(TEMPORAL_MATCHING_POPULATIONS)
+            )
+        )
 
     vo = config["visual_odometry"]
     _nonnegative_integer(vo["seed"], "visual_odometry.seed")
@@ -390,6 +404,7 @@ __all__ = [
     "AlgorithmConfig",
     "DEFAULT_ALGORITHM_CONFIG",
     "FEATURE_DETECTORS",
+    "TEMPORAL_MATCHING_POPULATIONS",
     "SCIENTIFIC_IMPLEMENTATION_REVISION",
     "STAGE_CONFIG_SECTIONS",
     "STAGE_UPSTREAM",

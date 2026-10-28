@@ -1,0 +1,7 @@
+{
+  "frontend": {
+    "temporal_matching": {
+      "population": "stereo_rows"
+    }
+  }
+}

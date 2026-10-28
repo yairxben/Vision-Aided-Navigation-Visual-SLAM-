@@ -189,6 +189,43 @@ class FeatureFrontend:
         )
 
 
+    def reciprocal_matches_on_rows(
+        self,
+        descriptors_back: np.ndarray,
+        back_rows: Sequence[int],
+        descriptors_front: np.ndarray,
+        front_rows: Sequence[int],
+    ) -> Tuple[cv2.DMatch, ...]:
+        """Reciprocal matches restricted to the given ascending descriptor rows.
+
+        Indices in the result refer to the full descriptor arrays, so callers
+        see the same index space as :meth:`reciprocal_matches`.
+        """
+
+        back_rows = np.asarray(back_rows, dtype=int)
+        front_rows = np.asarray(front_rows, dtype=int)
+        if np.any(np.diff(back_rows) <= 0) or np.any(np.diff(front_rows) <= 0):
+            raise ContractError("matching rows must be strictly ascending")
+        if len(back_rows) == 0 or len(front_rows) == 0:
+            return ()
+        local = self.reciprocal_matches(
+            descriptors_back[back_rows], descriptors_front[front_rows]
+        )
+        return tuple(
+            cv2.DMatch(
+                int(back_rows[match.queryIdx]), int(front_rows[match.trainIdx]),
+                int(match.imgIdx), float(match.distance),
+            )
+            for match in local
+        )
+
+
+def stereo_rows(stereo: StereoFeatures) -> Tuple[int, ...]:
+    """Ascending left-feature indices that have a stereo inlier."""
+
+    return tuple(sorted({int(match.queryIdx) for match in stereo.inliers}))
+
+
 def match_triplets(matches: Sequence[cv2.DMatch]) -> Tuple[Tuple[int, int, float], ...]:
     """Stable primitive representation used by bounded parity tests/artifacts."""
 

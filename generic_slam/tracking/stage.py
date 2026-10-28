@@ -26,7 +26,7 @@ from ..artifacts.manifest import (
 from ..config import AlgorithmConfig
 from ..contracts import ContractError
 from ..dataset.kitti import KittiEstimationContext
-from ..frontend.features import FeatureFrontend, StereoFeatures
+from ..frontend.features import FeatureFrontend, StereoFeatures, stereo_rows
 from ..frontend.pnp import reset_random_generators, run_visual_odometry_ransac
 from ..frontend.stereo import compose_right_camera, project_points, triangulate_stereo_matches
 from ..frontend.temporal import build_four_view_consensus
@@ -294,6 +294,9 @@ def run_tracking_stage(
         evidence_root = attempt / "transition_evidence"
         evidence_root.mkdir()
         vo_ransac = config.section("visual_odometry")["ransac"]
+        match_stereo_rows_only = (
+            config.section("frontend")["temporal_matching"]["population"] == "stereo_rows"
+        )
 
         for current_frame_id in range(1, frame_count):
             transition_started = time.perf_counter()
@@ -315,10 +318,16 @@ def run_tracking_stage(
             left_image, right_image = dataset.read_stereo(current_frame_id)
             current_stereo = frontend.extract_stereo(left_image, right_image)
             current_prepared = _prepared(current_stereo)
-            reciprocal = frontend.reciprocal_matches(
-                previous_stereo.left.descriptors,
-                current_stereo.left.descriptors,
-            )
+            if match_stereo_rows_only:
+                reciprocal = frontend.reciprocal_matches_on_rows(
+                    previous_stereo.left.descriptors, stereo_rows(previous_stereo),
+                    current_stereo.left.descriptors, stereo_rows(current_stereo),
+                )
+            else:
+                reciprocal = frontend.reciprocal_matches(
+                    previous_stereo.left.descriptors,
+                    current_stereo.left.descriptors,
+                )
             consensus = build_four_view_consensus(
                 previous_stereo.inliers, current_stereo.inliers, reciprocal
             )
