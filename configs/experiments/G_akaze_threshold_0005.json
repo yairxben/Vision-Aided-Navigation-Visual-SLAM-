@@ -1,0 +1,7 @@
+{
+  "frontend": {
+    "akaze": {
+      "threshold": 0.0005
+    }
+  }
+}

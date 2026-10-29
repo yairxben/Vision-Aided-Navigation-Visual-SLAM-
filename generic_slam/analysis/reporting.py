@@ -657,6 +657,7 @@ def _summary_markdown(
     detector = frontend["detector"]
     detector_setting = (
         "threshold {}".format(frontend["akaze"]["threshold"]) if detector == "akaze"
+        else "max features {}".format(frontend["orb"]["max_features"]) if detector == "orb"
         else "contrast threshold {}".format(frontend["sift"]["contrast_threshold"])
     )
     lines = [

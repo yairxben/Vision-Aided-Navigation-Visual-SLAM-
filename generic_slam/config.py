@@ -18,7 +18,9 @@ SCIENTIFIC_IMPLEMENTATION_REVISION = (
 )
 
 
-FEATURE_DETECTORS = ("akaze", "sift")
+FEATURE_DETECTORS = ("akaze", "orb", "sift")
+# Detectors with binary descriptors: exact brute-force Hamming matching.
+BINARY_DETECTORS = ("akaze", "orb")
 TEMPORAL_MATCHING_POPULATIONS = ("all_features", "stereo_rows")
 STEREO_MATCHING_MODES = ("global_nearest", "row_band")
 ROW_BAND_UNIQUENESS_TESTS = ("mutual", "ratio")
@@ -26,13 +28,19 @@ ROW_BAND_UNIQUENESS_TESTS = ("mutual", "ratio")
 
 DEFAULT_ALGORITHM_CONFIG: Dict[str, Any] = {
     "frontend": {
-        # "akaze": binary descriptors, exact brute-force Hamming matching.
+        # "akaze", "orb": binary descriptors, exact brute-force Hamming matching.
         # "sift": float descriptors, FLANN KD-tree matching (settings below).
         "detector": "akaze",
         "akaze": {
             # Below OpenCV's 0.001 default: on KITTI 00 this gives more
             # geometrically valid stereo matches than SIFT at ~2.5x the speed.
             "threshold": 0.0002,
+        },
+        "orb": {
+            "max_features": 3000,
+            "scale_factor": 1.2,
+            "levels": 8,
+            "fast_threshold": 20,
         },
         "sift": {
             "contrast_threshold": 0.02,
@@ -206,6 +214,11 @@ def validate_algorithm_config(config: Mapping[str, Any]) -> None:
             "frontend.detector must be one of {}".format(", ".join(FEATURE_DETECTORS))
         )
     _number(frontend["akaze"]["threshold"], "frontend.akaze.threshold", minimum=0.0)
+    _positive_integer(frontend["orb"]["max_features"], "frontend.orb.max_features")
+    if _number(frontend["orb"]["scale_factor"], "frontend.orb.scale_factor") <= 1.0:
+        raise ContractError("frontend.orb.scale_factor must be greater than 1")
+    _positive_integer(frontend["orb"]["levels"], "frontend.orb.levels")
+    _positive_integer(frontend["orb"]["fast_threshold"], "frontend.orb.fast_threshold")
     _number(frontend["sift"]["contrast_threshold"], "frontend.sift.contrast_threshold", minimum=0.0)
     _number(frontend["sift"]["edge_threshold"], "frontend.sift.edge_threshold", minimum=0.0)
     _nonnegative_integer(frontend["flann"]["algorithm"], "frontend.flann.algorithm")
@@ -428,6 +441,7 @@ def write_resolved_config(config: AlgorithmConfig, path: Path) -> None:
 __all__ = [
     "AlgorithmConfig",
     "DEFAULT_ALGORITHM_CONFIG",
+    "BINARY_DETECTORS",
     "FEATURE_DETECTORS",
     "TEMPORAL_MATCHING_POPULATIONS",
     "SCIENTIFIC_IMPLEMENTATION_REVISION",

@@ -9,6 +9,7 @@ from typing import Mapping, Optional, Sequence, Tuple
 import cv2
 import numpy as np
 
+from ..config import BINARY_DETECTORS
 from ..contracts import ContractError
 
 # One helper thread detects the right image while the caller detects the left
@@ -62,6 +63,14 @@ def create_detector(frontend_config: Mapping[str, object]) -> cv2.Feature2D:
         return cv2.AKAZE_create(
             threshold=float(frontend_config["akaze"]["threshold"])
         )
+    if detector == "orb":
+        orb = frontend_config["orb"]
+        return cv2.ORB_create(
+            nfeatures=int(orb["max_features"]),
+            scaleFactor=float(orb["scale_factor"]),
+            nlevels=int(orb["levels"]),
+            fastThreshold=int(orb["fast_threshold"]),
+        )
     if detector == "sift":
         sift = frontend_config["sift"]
         return cv2.SIFT_create(
@@ -104,7 +113,7 @@ class FeatureFrontend:
         the configured FLANN KD-tree with the L2 norm.
         """
 
-        if self.detector_type == "akaze":
+        if self.detector_type in BINARY_DETECTORS:
             return cv2.BFMatcher(cv2.NORM_HAMMING, crossCheck=False)
         return cv2.FlannBasedMatcher(
             dict(self._index_parameters), dict(self._search_parameters)
@@ -118,7 +127,7 @@ class FeatureFrontend:
         order of matcher calls matters and they must stay sequential.
         """
 
-        return self.detector_type == "akaze"
+        return self.detector_type in BINARY_DETECTORS
 
     @staticmethod
     def _extract_with(detector: cv2.Feature2D, image: np.ndarray, label: str) -> ImageFeatures:
@@ -189,7 +198,7 @@ class FeatureFrontend:
         right_order = np.argsort(right_points[:, 1], kind="stable")
         right_y = right_points[right_order, 1]
         stripes = np.floor(left_points[:, 1] / self.ROW_BAND_STRIPE_PX).astype(np.int64)
-        binary = left.descriptors.dtype == np.uint8 and self.detector_type == "akaze"
+        binary = self.detector_type in BINARY_DETECTORS
         norm, dtype = (cv2.NORM_HAMMING, cv2.CV_32S) if binary else (cv2.NORM_L2, cv2.CV_32F)
         queries, trains, distances = [], [], []
         for stripe in np.unique(stripes):
