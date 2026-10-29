@@ -2,7 +2,6 @@
 
 from __future__ import annotations
 
-import csv
 import os
 import resource
 import tempfile
@@ -45,18 +44,18 @@ WINDOW_ARTIFACTS = (
     "endpoint_edge.json",
     "endpoint_covariances.npz",
     "camera_marginals.npz",
-    "projection_residuals.csv",
+    "projection_residuals.npz",
     "rejections.csv",
 )
-PROJECTION_FIELDS = (
-    "factor_index", "frame_id", "track_id", "u_left_px", "u_right_px",
-    "v_mean_px", "initial_u_left_px", "initial_u_right_px",
-    "initial_v_mean_px", "final_u_left_px", "final_u_right_px",
-    "final_v_mean_px", "initial_residual_u_left_px",
-    "initial_residual_u_right_px", "initial_residual_v_mean_px",
-    "final_residual_u_left_px", "final_residual_u_right_px",
-    "final_residual_v_mean_px", "initial_factor_error", "final_factor_error",
+# projection_residuals.npz: one row per projection factor. Pixel triples are
+# (u_left, u_right, v_mean); projection = measurement + residual.
+PROJECTION_INDEX_ARRAYS = ("factor_index", "frame_id", "track_id")
+PROJECTION_TRIPLE_ARRAYS = (
+    "measurement_px", "initial_projection_px", "final_projection_px",
+    "initial_residual_px", "final_residual_px",
 )
+PROJECTION_ERROR_ARRAYS = ("initial_factor_error", "final_factor_error")
+PROJECTION_ARRAYS = PROJECTION_INDEX_ARRAYS + PROJECTION_TRIPLE_ARRAYS + PROJECTION_ERROR_ARRAYS
 
 
 @dataclass(frozen=True)
@@ -107,12 +106,13 @@ def _window_arrays(result: BundleWindowResult):
         key = result.camera_key_by_frame_id[frame_id]
         camera_initial.append(np.asarray(result.initial_values.atPose3(key).matrix(), dtype=float))
         camera_final.append(np.asarray(result.final_values.atPose3(key).matrix(), dtype=float))
-    landmark_initial = []
-    landmark_final = []
-    for track_id in result.accepted_track_ids:
-        key = result.landmark_key_by_track_id[track_id]
-        landmark_initial.append(np.asarray(result.initial_values.atPoint3(key), dtype=float))
-        landmark_final.append(np.asarray(result.final_values.atPoint3(key), dtype=float))
+    # Landmarks are the only Point3 values; key order is ascending TrackId.
+    landmark_initial = gtsam.utilities.extractPoint3(result.initial_values)
+    landmark_final = gtsam.utilities.extractPoint3(result.final_values)
+    if len(landmark_initial) != len(result.accepted_track_ids) or len(landmark_final) != len(
+        result.accepted_track_ids
+    ):
+        raise ContractError("Bundle Values landmark population differs")
     return {
         "frame_ids": np.asarray(result.frame_ids, dtype=np.int64),
         "camera_initial": np.asarray(camera_initial, dtype=float),
@@ -123,54 +123,22 @@ def _window_arrays(result: BundleWindowResult):
     }
 
 
-def _projection_rows(result: BundleWindowResult):
-    # Whole-window array arithmetic (elementwise, so bit-identical to per-row),
-    # then Python floats: csv's str() of numpy scalars is several times slower.
-    records = result.projection_records
-    measurements = np.asarray(
-        [record.measurement for record in records], dtype=float
-    ).reshape(-1, 3)
+def _projection_arrays(result: BundleWindowResult) -> Dict[str, np.ndarray]:
+    measurements = np.asarray(result.projection_measurements, dtype=float).reshape(-1, 3)
     initial_residuals = np.asarray(result.initial_residuals, dtype=float).reshape(-1, 3)
     final_residuals = np.asarray(result.final_residuals, dtype=float).reshape(-1, 3)
-    initial_projections = (measurements + initial_residuals).tolist()
-    final_projections = (measurements + final_residuals).tolist()
-    initial_errors = np.asarray(result.initial_projection_errors, dtype=float).tolist()
-    final_errors = np.asarray(result.final_projection_errors, dtype=float).tolist()
-    measurements = measurements.tolist()
-    initial_residuals = initial_residuals.tolist()
-    final_residuals = final_residuals.tolist()
-    rows = []
-    for index, record in enumerate(records):
-        measurement = measurements[index]
-        initial_residual = initial_residuals[index]
-        final_residual = final_residuals[index]
-        initial_projection = initial_projections[index]
-        final_projection = final_projections[index]
-        rows.append(
-            {
-                "factor_index": record.factor_index,
-                "frame_id": record.frame_id,
-                "track_id": record.track_id,
-                "u_left_px": measurement[0],
-                "u_right_px": measurement[1],
-                "v_mean_px": measurement[2],
-                "initial_u_left_px": initial_projection[0],
-                "initial_u_right_px": initial_projection[1],
-                "initial_v_mean_px": initial_projection[2],
-                "final_u_left_px": final_projection[0],
-                "final_u_right_px": final_projection[1],
-                "final_v_mean_px": final_projection[2],
-                "initial_residual_u_left_px": initial_residual[0],
-                "initial_residual_u_right_px": initial_residual[1],
-                "initial_residual_v_mean_px": initial_residual[2],
-                "final_residual_u_left_px": final_residual[0],
-                "final_residual_u_right_px": final_residual[1],
-                "final_residual_v_mean_px": final_residual[2],
-                "initial_factor_error": initial_errors[index],
-                "final_factor_error": final_errors[index],
-            }
-        )
-    return rows
+    return {
+        "factor_index": np.asarray(result.projection_factor_indices, dtype=np.int64),
+        "frame_id": np.asarray(result.projection_frame_ids, dtype=np.int64),
+        "track_id": np.asarray(result.projection_track_ids, dtype=np.int64),
+        "measurement_px": measurements,
+        "initial_projection_px": measurements + initial_residuals,
+        "final_projection_px": measurements + final_residuals,
+        "initial_residual_px": initial_residuals,
+        "final_residual_px": final_residuals,
+        "initial_factor_error": np.asarray(result.initial_projection_errors, dtype=float),
+        "final_factor_error": np.asarray(result.final_projection_errors, dtype=float),
+    }
 
 
 def _seal_window(
@@ -222,11 +190,7 @@ def _seal_window(
             camera_poses=covariance.camera_poses,
             marginal_covariances=covariance.camera_marginal_covariances,
         )
-        write_csv_atomic(
-            attempt / "projection_residuals.csv",
-            _projection_rows(result),
-            PROJECTION_FIELDS,
-        )
+        save_npz_atomic(attempt / "projection_residuals.npz", **_projection_arrays(result))
         write_csv_atomic(
             attempt / "rejections.csv",
             (
@@ -248,7 +212,7 @@ def _seal_window(
             "candidate_track_count": len(result.candidate_track_ids),
             "accepted_track_count": len(result.accepted_track_ids),
             "rejected_track_count": len(result.rejected_reason_by_track_id),
-            "projection_factor_count": len(result.projection_records),
+            "projection_factor_count": len(result.projection_factor_indices),
             "total_factor_count": int(result.graph.size()),
             "initial_graph_error": result.initial_graph_error,
             "final_graph_error": result.final_graph_error,
@@ -349,12 +313,15 @@ def validate_window_payload(directory: Path, ordinal: int, start: int, end: int)
             or not np.all(np.isfinite(marginal_covariances))
         ):
             raise ContractError("Bundle camera marginal shapes differ")
-    with (directory / "projection_residuals.csv").open(
-        "r", encoding="utf-8", newline=""
-    ) as handle:
-        reader = csv.DictReader(handle)
-        if tuple(reader.fieldnames or ()) != PROJECTION_FIELDS:
-            raise ContractError("Bundle projection residual columns differ")
+    with np.load(directory / "projection_residuals.npz", allow_pickle=False) as data:
+        if set(data.files) != set(PROJECTION_ARRAYS):
+            raise ContractError("Bundle projection residual arrays differ")
+        count = int(summary["projection_factor_count"])
+        if not (
+            all(data[name].shape == (count,) for name in PROJECTION_INDEX_ARRAYS + PROJECTION_ERROR_ARRAYS)
+            and all(data[name].shape == (count, 3) for name in PROJECTION_TRIPLE_ARRAYS)
+        ):
+            raise ContractError("Bundle projection residual shapes differ")
 
 
 def validate_window(

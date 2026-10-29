@@ -2,7 +2,6 @@
 
 from __future__ import annotations
 
-import csv
 from pathlib import Path
 
 import numpy as np
@@ -16,20 +15,8 @@ def bundle_window_rows(bundle_root: Path):
         if not directory.is_dir() or not (directory / "seal.json").is_file():
             continue
         summary = read_json(directory / "summary.json")
-        residuals = []
-        with (directory / "projection_residuals.csv").open(
-            "r", encoding="utf-8", newline=""
-        ) as handle:
-            for row in csv.DictReader(handle):
-                residuals.append(
-                    np.linalg.norm(
-                        [
-                            float(row["final_residual_u_left_px"]),
-                            float(row["final_residual_u_right_px"]),
-                            float(row["final_residual_v_mean_px"]),
-                        ]
-                    )
-                )
+        with np.load(directory / "projection_residuals.npz", allow_pickle=False) as data:
+            residuals = np.linalg.norm(data["final_residual_px"], axis=1)
         rows.append(
             {
                 "window_ordinal": int(summary["window_ordinal"]),

@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 import math
-from collections import Counter, deque
+from collections import Counter
 from dataclasses import dataclass
 from time import perf_counter
 from typing import Dict, Mapping, Optional, Sequence, Tuple
@@ -23,6 +23,10 @@ NO_ALL_CAMERA_POSITIVE_DEPTH_INITIALIZATION = "no_all_camera_positive_depth_init
 NONFINITE_OBSERVATION = "nonfinite_observation"
 NONPOSITIVE_DISPARITY = "nonpositive_disparity"
 EXCESSIVE_INITIALIZATION_DEPTH = "excessive_initialization_depth"
+# Batched projection evidence must agree with GTSAM's own factor evaluation.
+EVIDENCE_AGREEMENT_TOLERANCE = 1e-9
+_EVIDENCE_SPOT_CHECKS = 16
+_ARITHMETIC_SPOT_CHECKS = 8
 
 
 @dataclass(frozen=True)
@@ -42,23 +46,14 @@ class LandmarkEligibility:
 
 
 @dataclass(frozen=True)
-class StereoObservation:
-    frame_id: int
-    track_id: int
-    measurement: Tuple[float, float, float]
+class _WindowObservations:
+    """Valid observations of the candidate tracks, by TrackId then FrameId."""
 
-    def point(self) -> gtsam.StereoPoint2:
-        return gtsam.StereoPoint2(*self.measurement)
-
-
-@dataclass(frozen=True)
-class ProjectionFactorRecord:
-    factor_index: int
-    frame_id: int
-    track_id: int
-    camera_key: int
-    landmark_key: int
-    measurement: Tuple[float, float, float]
+    track_ids: np.ndarray  # (T,) candidate TrackIds, ascending
+    starts: np.ndarray  # (T,) each candidate's slice of the observation rows
+    counts: np.ndarray  # (T,)
+    frame_ids: np.ndarray  # (M,)
+    measurements: np.ndarray  # (M, 3) u_left, u_right, v_mean
 
 
 @dataclass
@@ -71,7 +66,11 @@ class BundleWindowResult:
     initialization_frame_by_track_id: Mapping[int, int]
     initialization_depth_by_track_id: Mapping[int, float]
     landmark_key_by_track_id: Mapping[int, int]
-    projection_records: Tuple[ProjectionFactorRecord, ...]
+    # One row per projection factor, in graph order (factor 0 is the anchor).
+    projection_factor_indices: np.ndarray
+    projection_frame_ids: np.ndarray
+    projection_track_ids: np.ndarray
+    projection_measurements: np.ndarray
     graph: gtsam.NonlinearFactorGraph
     initial_values: gtsam.Values
     final_values: gtsam.Values
@@ -114,16 +113,64 @@ def _camera_pose_in_window(
     )
 
 
+def _rotate(matrices: np.ndarray, vectors: np.ndarray) -> np.ndarray:
+    """``matrices[i] @ vectors[i]`` in Eigen's fixed-size 3x3 evaluation order.
+
+    GTSAM's Pose3 transforms sum rows 0-1 as (a + b) + c (one SIMD packet) and
+    row 2 as a + (b + c). Matching that order keeps the batched kernel
+    bit-identical to the per-object GTSAM calls it replaces.
+    """
+
+    a = matrices[:, :, 0] * vectors[:, 0:1]
+    b = matrices[:, :, 1] * vectors[:, 1:2]
+    c = matrices[:, :, 2] * vectors[:, 2:3]
+    result = (a + b) + c
+    result[:, 2] = a[:, 2] + (b[:, 2] + c[:, 2])
+    return result
+
+
+def _transform_from(rotations: np.ndarray, translations: np.ndarray, points: np.ndarray):
+    """Batched ``Pose3.transformFrom`` (camera to window coordinates)."""
+
+    return _rotate(rotations, points) + translations
+
+
+def _transform_to(rotations: np.ndarray, translations: np.ndarray, points: np.ndarray):
+    """Batched ``Pose3.transformTo`` (window to camera coordinates)."""
+
+    return _rotate(np.transpose(rotations, (0, 2, 1)), points - translations)
+
+
+def _pose_arrays(poses: Sequence[gtsam.Pose3]) -> Tuple[np.ndarray, np.ndarray]:
+    rotations = np.stack([np.asarray(pose.rotation().matrix(), dtype=float) for pose in poses])
+    translations = np.stack(
+        [np.asarray(pose.translation(), dtype=float).reshape(3) for pose in poses]
+    )
+    return rotations, translations
+
+
+def _backproject(measurements: np.ndarray, calibration: gtsam.Cal3_S2Stereo) -> np.ndarray:
+    """Batched ``StereoCamera.backproject`` in the camera frame (GTSAM's formula)."""
+
+    fx, fy = calibration.fx(), calibration.fy()
+    depth = calibration.baseline() * fx / (measurements[:, 0] - measurements[:, 1])
+    x = depth * (measurements[:, 0] - calibration.px()) / fx
+    y = depth * (measurements[:, 2] - calibration.py()) / fy
+    return np.stack((x, y, depth), axis=1)
+
+
 def _window_observations(
     database: object,
     frame_ids: Tuple[int, ...],
     invalid_reasons: Counter,
-) -> Tuple[Tuple[int, ...], Dict[int, Tuple[StereoObservation, ...]]]:
+) -> _WindowObservations:
     """Candidate TrackIds (ascending) and each one's valid observations in frame order."""
 
     window = database.window_observations(frame_ids[0], frame_ids[-1])
     track_ids = window["track_ids"]
     links = window["links"]
+    if not len(track_ids):
+        raise ContractError("Bundle window contains no eligible landmarks")
     boundaries = np.flatnonzero(np.diff(track_ids)) + 1
     starts = np.concatenate(([0], boundaries)).astype(np.int64)
     ends = np.concatenate((boundaries, [len(track_ids)])).astype(np.int64)
@@ -145,147 +192,215 @@ def _window_observations(
     ):
         if count:  # reported reasons are only those that occurred
             invalid_reasons[reason] += count
-    valid = (finite & positive).tolist()
-    frames = window["frame_ids"].tolist()
-    values = links.tolist()
-    candidate_ids = candidates.tolist()
-    observations = {}
-    for track_id, start, end in zip(candidate_ids, starts.tolist(), ends.tolist()):
-        observations[track_id] = tuple(
-            StereoObservation(frames[row], track_id, tuple(values[row]))
-            for row in range(start, end)
-            if valid[row]
-        )
-    return tuple(candidate_ids), observations
+    valid = finite & positive
+    counts = np.add.reduceat(valid.astype(np.int64), starts)
+    return _WindowObservations(
+        track_ids=candidates.astype(np.int64),
+        starts=np.cumsum(counts) - counts,
+        counts=counts,
+        frame_ids=window["frame_ids"][valid].astype(np.int64),
+        measurements=np.asarray(links[valid], dtype=np.float64),
+    )
 
 
-def _finite_with_positive_depth(camera_point: np.ndarray) -> bool:
-    x, y, z = (float(value) for value in np.asarray(camera_point).reshape(3))
-    return math.isfinite(x) and math.isfinite(y) and math.isfinite(z) and z > 0.0
+def _segment_rows(starts: np.ndarray, counts: np.ndarray) -> np.ndarray:
+    """Row indices of the concatenated slices ``starts[i]:starts[i] + counts[i]``."""
+
+    total = int(counts.sum())
+    offsets = np.cumsum(counts) - counts
+    return np.repeat(starts - offsets, counts) + np.arange(total, dtype=np.int64)
 
 
-def _initialize_landmark(
-    observations: Tuple[StereoObservation, ...],
-    camera_poses: Mapping[int, gtsam.Pose3],
+def _distinct_frame_counts(observations: _WindowObservations) -> np.ndarray:
+    frames = observations.frame_ids
+    new_frame = np.ones(len(frames), dtype=np.int64)
+    new_frame[1:] = frames[1:] != frames[:-1]
+    nonempty = observations.counts > 0
+    new_frame[observations.starts[nonempty]] = 1
+    distinct = np.zeros(len(observations.counts), dtype=np.int64)
+    if np.any(nonempty):
+        # Empty slices have zero width, so each nonempty slice runs to the next.
+        distinct[nonempty] = np.add.reduceat(new_frame, observations.starts[nonempty])
+    return distinct
+
+
+def _check_gtsam_arithmetic(
+    camera_poses: Sequence[gtsam.Pose3],
+    calibration: gtsam.Cal3_S2Stereo,
+    frame_offsets: np.ndarray,
+    measurements: np.ndarray,
+    points: np.ndarray,
+) -> None:
+    """Fail loudly if this GTSAM build evaluates the transforms differently."""
+
+    for row in np.linspace(0, len(points) - 1, min(len(points), _ARITHMETIC_SPOT_CHECKS)).astype(int):
+        pose = camera_poses[int(frame_offsets[row])]
+        expected = np.asarray(
+            gtsam.StereoCamera(pose, calibration).backproject(
+                gtsam.StereoPoint2(*measurements[row].tolist())
+            ),
+            dtype=float,
+        ).reshape(3)
+        other = camera_poses[-1 - int(frame_offsets[row])]
+        rotation, translation = _pose_arrays((other,))
+        if not (
+            np.array_equal(expected, points[row])
+            and np.array_equal(
+                np.asarray(other.transformTo(expected), dtype=float).reshape(3),
+                _transform_to(rotation, translation, points[row:row + 1])[0],
+            )
+        ):
+            raise ContractError("GTSAM Pose3 arithmetic differs from the batched kernel")
+
+
+def _initialize_landmarks(
+    observations: _WindowObservations,
+    eligible: np.ndarray,
+    camera_poses: Sequence[gtsam.Pose3],
+    start_frame_id: int,
     calibration: gtsam.Cal3_S2Stereo,
     maximum_depth: Optional[float],
 ):
-    backprojected = []
-    for observation in observations:
-        camera = gtsam.StereoCamera(camera_poses[observation.frame_id], calibration)
-        point = np.asarray(camera.backproject(observation.point()), dtype=float).reshape(3)
-        depth = float("nan")
-        if np.all(np.isfinite(point)):
-            depth = float(np.asarray(
-                camera_poses[observation.frame_id].transformTo(point), dtype=float
-            ).reshape(3)[2])
-        backprojected.append((observation, point, depth))
+    """Per eligible track: rejection reason ("" if accepted), point, frame, depth.
+
+    For each track, the latest observation whose backprojection is finite and
+    in front of every camera that observes the track initializes the landmark.
+    """
+
+    counts = observations.counts[eligible]
+    rows = _segment_rows(observations.starts[eligible], counts)
+    track_count, row_count = len(counts), len(rows)
+    segment = np.repeat(np.arange(track_count), counts)
+    first_row = np.cumsum(counts) - counts
+    frame_offsets = observations.frame_ids[rows] - start_frame_id
+    measurements = observations.measurements[rows]
+    rotations, translations = _pose_arrays(camera_poses)
+    rotations, translations = rotations[frame_offsets], translations[frame_offsets]
+    points = _transform_from(rotations, translations, _backproject(measurements, calibration))
+    _check_gtsam_arithmetic(camera_poses, calibration, frame_offsets, measurements, points)
+    finite_point = np.isfinite(points).all(axis=1)
+    depths = np.full(row_count, np.nan)
+    depths[finite_point] = _transform_to(
+        rotations[finite_point], translations[finite_point], points[finite_point]
+    )[:, 2]
+
+    reasons = np.full(track_count, "", dtype=object)
     if maximum_depth is not None:
         # Reject the whole landmark if any observation is too far: near-zero
         # disparity leaves depth unconstrained and makes Marginals singular.
         limit = maximum_depth - 4.0 * np.spacing(maximum_depth)
-        for observation, _, depth in reversed(backprojected):
-            if np.isfinite(depth) and depth > 0.0 and depth >= limit:
-                return None, observation.frame_id, depth, EXCESSIVE_INITIALIZATION_DEPTH
-    saw_finite = False
-    for observation, point, depth in reversed(backprojected):
-        if not np.all(np.isfinite(point)):
-            continue
-        saw_finite = True
-        if all(
-            _finite_with_positive_depth(camera_poses[item.frame_id].transformTo(point))
-            for item in observations
-        ):
-            return point, observation.frame_id, depth, ""
-    if not saw_finite:
-        return None, -1, float("nan"), NO_FINITE_BACKPROJECTION
-    return None, -1, float("nan"), NO_ALL_CAMERA_POSITIVE_DEPTH_INITIALIZATION
+        with np.errstate(invalid="ignore"):
+            too_far = np.isfinite(depths) & (depths > 0.0) & (depths >= limit)
+        reasons[np.unique(segment[too_far])] = EXCESSIVE_INITIALIZATION_DEPTH
+
+    # Every (candidate row, observing row) pair of the same track.
+    pair_counts = counts[segment]
+    candidate = np.repeat(np.arange(row_count), pair_counts)
+    observer = np.repeat(first_row[segment], pair_counts) + (
+        np.arange(len(candidate)) - np.repeat(np.cumsum(pair_counts) - pair_counts, pair_counts)
+    )
+    with np.errstate(invalid="ignore"):
+        in_camera = _transform_to(
+            rotations[observer], translations[observer], points[candidate]
+        )
+        in_front = np.isfinite(in_camera).all(axis=1) & (in_camera[:, 2] > 0.0)
+    usable = finite_point & np.logical_and.reduceat(
+        in_front, np.cumsum(pair_counts) - pair_counts
+    )
+    chosen = np.full(track_count, -1, dtype=np.int64)
+    usable_rows = np.flatnonzero(usable)
+    np.maximum.at(chosen, segment[usable_rows], usable_rows)
+    any_finite = np.zeros(track_count, dtype=bool)
+    any_finite[segment[finite_point]] = True
+    undecided = reasons == ""
+    reasons[undecided & (chosen < 0) & any_finite] = NO_ALL_CAMERA_POSITIVE_DEPTH_INITIALIZATION
+    reasons[undecided & ~any_finite] = NO_FINITE_BACKPROJECTION
+    safe = np.maximum(chosen, 0)
+    return reasons, points[safe], observations.frame_ids[rows][safe], depths[safe]
 
 
 def _connectivity(
-    frame_ids: Tuple[int, ...], track_ids: Tuple[int, ...], pairs: Sequence[Tuple[int, int]]
+    frame_ids: Tuple[int, ...],
+    track_ids: np.ndarray,
+    counts: np.ndarray,
+    frame_offsets: np.ndarray,
 ):
-    nodes = {("c", value) for value in frame_ids}.union(
-        {("q", value) for value in track_ids}
+    """Factor degrees; every camera must reach the anchor through landmarks."""
+
+    camera_counts = np.bincount(frame_offsets, minlength=len(frame_ids))
+    parent = list(range(len(frame_ids)))
+
+    def root(node: int) -> int:
+        while parent[node] != node:
+            parent[node] = parent[parent[node]]
+            node = parent[node]
+        return node
+
+    # Consecutive observations of one landmark link their two cameras.
+    same_track = np.repeat(np.arange(len(counts)), counts)
+    linked = same_track[1:] == same_track[:-1]
+    edges = np.unique(
+        np.stack((frame_offsets[:-1][linked], frame_offsets[1:][linked]), axis=1), axis=0
     )
-    adjacency = {node: set() for node in nodes}
-    camera_degrees = {value: 0 for value in frame_ids}
-    landmark_degrees = {value: 0 for value in track_ids}
-    for frame_id, track_id in pairs:
-        camera = ("c", frame_id)
-        landmark = ("q", track_id)
-        adjacency[camera].add(landmark)
-        adjacency[landmark].add(camera)
-        camera_degrees[frame_id] += 1
-        landmark_degrees[track_id] += 1
-    reached = {("c", frame_ids[0])}
-    queue = deque(reached)
-    while queue:
-        for neighbor in adjacency[queue.popleft()]:
-            if neighbor not in reached:
-                reached.add(neighbor)
-                queue.append(neighbor)
-    if reached != nodes:
+    for first, second in edges.tolist():
+        parent[root(first)] = root(second)
+    anchor = root(0)
+    if any(root(node) != anchor for node in range(len(frame_ids))):
         raise ContractError("Bundle camera-landmark graph is disconnected")
-    return camera_degrees, landmark_degrees
-
-
-RESIDUAL_AGREEMENT_ATOL = float(np.finfo(float).eps * 128)
-
-
-def _all_close(first: Sequence[float], second: Sequence[float]) -> bool:
-    """``np.allclose(first, second, rtol=0, atol=RESIDUAL_AGREEMENT_ATOL)``.
-
-    Same semantics (NaN never close, equal infinities close) on a few Python
-    floats; numpy's per-call overhead made this a third of Bundle's runtime.
-    """
-
-    return all(
-        a == b or abs(a - b) <= RESIDUAL_AGREEMENT_ATOL for a, b in zip(first, second)
+    return (
+        dict(zip(frame_ids, camera_counts.tolist())),
+        dict(zip(track_ids.tolist(), counts.tolist())),
     )
 
 
 def _projection_evidence(
-    records: Tuple[ProjectionFactorRecord, ...],
     graph: gtsam.NonlinearFactorGraph,
     values: gtsam.Values,
+    graph_error: float,
+    camera_keys: Sequence[int],
+    frame_offsets: np.ndarray,
+    landmark_rows: np.ndarray,
+    landmark_count: int,
+    measurements: np.ndarray,
     calibration: gtsam.Cal3_S2Stereo,
+    inverse_sigmas: np.ndarray,
 ):
-    residuals = []
-    errors = []
-    cheirality_count = 0
-    for record in records:
-        camera = gtsam.StereoCamera(values.atPose3(record.camera_key), calibration)
-        point = np.asarray(values.atPoint3(record.landmark_key), dtype=float).reshape(3)
-        factor_residual = np.asarray(
-            graph.at(record.factor_index).unwhitenedError(values), dtype=float
-        ).reshape(3)
-        try:
-            projection = np.asarray(camera.project(point).vector(), dtype=float).reshape(3)
-        except RuntimeError as error:
-            if "Cheirality" not in str(error):
-                raise
-            # GenericStereoFactor3D converts cheirality into its finite 2*fx
-            # penalty. Retain that exact solver residual as diagnostic evidence
-            # instead of allowing reporting to abort a completed optimization.
-            cheirality_count += 1
-            residual = factor_residual
-        else:
-            residual = projection - np.asarray(record.measurement, dtype=float)
-            if not _all_close(residual.tolist(), factor_residual.tolist()):
-                raise ContractError("direct and GTSAM projection residuals differ")
-        factor_error = float(graph.at(record.factor_index).error(values))
-        if not all(math.isfinite(value) for value in factor_residual.tolist()) or not (
-            math.isfinite(factor_error)
-        ):
-            raise ContractError("Bundle projection evidence is nonfinite")
-        residuals.append(residual)
-        errors.append(factor_error)
-    return (
-        np.asarray(errors, dtype=float),
-        np.asarray(residuals, dtype=float),
-        cheirality_count,
+    """Per-factor stereo residuals and errors, batched; checked against GTSAM."""
+
+    rotations, translations = _pose_arrays([values.atPose3(key) for key in camera_keys])
+    landmarks = np.asarray(gtsam.utilities.extractPoint3(values), dtype=float).reshape(-1, 3)
+    if len(landmarks) != landmark_count:
+        raise ContractError("Bundle Values landmark population differs")
+    in_camera = _transform_to(
+        rotations[frame_offsets], translations[frame_offsets], landmarks[landmark_rows]
     )
+    # GenericStereoFactor3D turns cheirality into a finite 2*fx penalty.
+    cheirality = in_camera[:, 2] <= 0.0
+    fx, fy = calibration.fx(), calibration.fy()
+    with np.errstate(divide="ignore", invalid="ignore"):
+        inverse_depth = 1.0 / in_camera[:, 2]
+        u_left = calibration.px() + fx * inverse_depth * in_camera[:, 0]
+        u_right = calibration.px() + fx * inverse_depth * (in_camera[:, 0] - calibration.baseline())
+        v_mean = calibration.py() + fy * inverse_depth * in_camera[:, 1]
+    residuals = np.stack((u_left, u_right, v_mean), axis=1) - measurements
+    residuals[cheirality] = 2.0 * fx
+    errors = 0.5 * np.sum((residuals * inverse_sigmas) ** 2, axis=1)
+    if not (np.isfinite(residuals).all() and np.isfinite(errors).all()):
+        raise ContractError("Bundle projection evidence is nonfinite")
+
+    total = float(graph.at(0).error(values)) + math.fsum(errors.tolist())
+    tolerance = EVIDENCE_AGREEMENT_TOLERANCE
+    if abs(total - graph_error) > tolerance * max(1.0, abs(graph_error)):
+        raise ContractError("direct and GTSAM projection errors differ")
+    for row in np.linspace(0, len(errors) - 1, min(len(errors), _EVIDENCE_SPOT_CHECKS)).astype(int):
+        factor = graph.at(int(row) + 1)
+        expected = np.asarray(factor.unwhitenedError(values), dtype=float).reshape(3)
+        expected_error = float(factor.error(values))
+        if np.max(np.abs(expected - residuals[row])) > tolerance or abs(
+            expected_error - errors[row]
+        ) > tolerance * max(1.0, abs(expected_error)):
+            raise ContractError("direct and GTSAM projection residuals differ")
+    return errors, residuals, int(np.count_nonzero(cheirality))
 
 
 def solve_bundle_window(
@@ -315,7 +430,7 @@ def solve_bundle_window(
     camera_keys = {
         frame_id: int(gtsam.symbol(CAMERA_SYMBOL, frame_id)) for frame_id in frame_ids
     }
-    camera_poses = {}
+    camera_poses = []
     initial = gtsam.Values()
     for frame_id in frame_ids:
         pose = _camera_pose_in_window(
@@ -327,83 +442,87 @@ def solve_bundle_window(
             if np.max(np.abs(np.asarray(pose.matrix()) - np.eye(4))) > rotation_atol:
                 raise ContractError("Bundle anchor is not local identity")
             pose = gtsam.Pose3()
-        camera_poses[frame_id] = pose
+        camera_poses.append(pose)
         initial.insert(camera_keys[frame_id], pose)
     graph = gtsam.NonlinearFactorGraph()
     graph.add(gtsam.PriorFactorPose3(camera_keys[start], gtsam.Pose3(), anchor_noise))
 
     invalid_reasons = Counter()
-    candidate_tracks, observations_by_track = _window_observations(
-        database, frame_ids, invalid_reasons
+    observations = _window_observations(database, frame_ids, invalid_reasons)
+    candidate_tracks = observations.track_ids
+    reasons = np.full(len(candidate_tracks), INSUFFICIENT_VALID_OBSERVATIONS, dtype=object)
+    eligible = (
+        observations.counts >= landmark_eligibility.minimum_valid_observations
+    ) & (
+        _distinct_frame_counts(observations) >= landmark_eligibility.minimum_distinct_frames
     )
-    accepted = {}
-    landmarks = {}
-    initialization_frames = {}
-    initialization_depths = {}
-    rejected = {}
-    for track_id in candidate_tracks:
-        observations = observations_by_track[track_id]
-        if (
-            len(observations) < landmark_eligibility.minimum_valid_observations
-            or len({item.frame_id for item in observations})
-            < landmark_eligibility.minimum_distinct_frames
-        ):
-            rejected[track_id] = INSUFFICIENT_VALID_OBSERVATIONS
-            continue
-        point, frame_id, depth, reason = _initialize_landmark(
+    if np.any(eligible):
+        eligible_reasons, points, initialization_frames, depths = _initialize_landmarks(
             observations,
+            eligible,
             camera_poses,
+            start,
             calibration,
             landmark_eligibility.maximum_initialization_depth_m,
         )
-        if reason:
-            rejected[track_id] = reason
-            continue
-        accepted[track_id] = observations
-        landmarks[track_id] = point
-        initialization_frames[track_id] = frame_id
-        initialization_depths[track_id] = depth
-    accepted_tracks = tuple(sorted(accepted))
-    if not accepted_tracks:
+        reasons[eligible] = eligible_reasons
+        accepted_in_eligible = eligible_reasons == ""
+    else:
+        accepted_in_eligible = np.zeros(0, dtype=bool)
+    accepted = reasons == ""
+    if not np.any(accepted):
         raise ContractError("Bundle window contains no eligible landmarks")
-    landmark_keys = {
-        track_id: int(gtsam.symbol(LANDMARK_SYMBOL, track_id))
-        for track_id in accepted_tracks
+    accepted_tracks = candidate_tracks[accepted]
+    points = points[accepted_in_eligible]
+    rejected = {
+        track_id: reason
+        for track_id, reason in zip(candidate_tracks.tolist(), reasons.tolist())
+        if reason
     }
-    records = []
-    pairs = []
-    for track_id in accepted_tracks:
-        initial.insert(landmark_keys[track_id], landmarks[track_id])
-        for observation in accepted[track_id]:
-            graph.add(
-                gtsam.GenericStereoFactor3D(
-                    observation.point(), projection_noise,
-                    camera_keys[observation.frame_id], landmark_keys[track_id],
-                    calibration,
-                )
+
+    accepted_counts = observations.counts[accepted]
+    rows = _segment_rows(observations.starts[accepted], accepted_counts)
+    factor_frames = observations.frame_ids[rows]
+    factor_tracks = np.repeat(accepted_tracks, accepted_counts)
+    factor_measurements = observations.measurements[rows]
+    frame_offsets = factor_frames - start
+    landmark_rows = np.repeat(np.arange(len(accepted_tracks)), accepted_counts)
+    landmark_keys = [int(gtsam.symbol(LANDMARK_SYMBOL, track_id)) for track_id in accepted_tracks.tolist()]
+    for key, point in zip(landmark_keys, points):
+        initial.insert(key, point)
+    camera_key_list = [camera_keys[frame_id] for frame_id in frame_ids]
+    add = graph.add
+    for measurement, frame_offset, landmark_row in zip(
+        factor_measurements.tolist(), frame_offsets.tolist(), landmark_rows.tolist()
+    ):
+        add(
+            gtsam.GenericStereoFactor3D(
+                gtsam.StereoPoint2(*measurement), projection_noise,
+                camera_key_list[frame_offset], landmark_keys[landmark_row], calibration,
             )
-            records.append(
-                ProjectionFactorRecord(
-                    int(graph.size() - 1), observation.frame_id, track_id,
-                    camera_keys[observation.frame_id], landmark_keys[track_id],
-                    observation.measurement,
-                )
-            )
-            pairs.append((observation.frame_id, track_id))
-    records_tuple = tuple(records)
+        )
+    factor_count = len(rows)
+    if graph.size() != factor_count + 1:
+        raise ContractError("Bundle graph factor population differs")
     camera_degrees, landmark_degrees = _connectivity(
-        frame_ids, accepted_tracks, pairs
+        frame_ids, accepted_tracks, accepted_counts, frame_offsets
     )
-    if sum(graph.at(index).dim() for index in range(graph.size())) < initial.dim():
+    if graph.at(0).dim() + 3 * factor_count < initial.dim():
         raise ContractError("Bundle graph is dimensionally underconstrained")
+    inverse_sigmas = np.asarray(projection_noise.invsigmas(), dtype=float).reshape(3)
+
+    def evidence(values: gtsam.Values, graph_error: float):
+        return _projection_evidence(
+            graph, values, graph_error, camera_key_list, frame_offsets, landmark_rows,
+            len(accepted_tracks), factor_measurements, calibration, inverse_sigmas,
+        )
+
     initial_error = float(graph.error(initial))
     (
         initial_projection_errors,
         initial_residuals,
         initial_cheirality_factor_count,
-    ) = _projection_evidence(
-        records_tuple, graph, initial, calibration
-    )
+    ) = evidence(initial, initial_error)
     construction_seconds = perf_counter() - construction_started
 
     optimization_started = perf_counter()
@@ -421,19 +540,25 @@ def solve_bundle_window(
         final_projection_errors,
         final_residuals,
         final_cheirality_factor_count,
-    ) = _projection_evidence(
-        records_tuple, graph, final, calibration
-    )
+    ) = evidence(final, final_error)
+    accepted_list = accepted_tracks.tolist()
     return BundleWindowResult(
         frame_ids=frame_ids,
         camera_key_by_frame_id=camera_keys,
-        candidate_track_ids=candidate_tracks,
-        accepted_track_ids=accepted_tracks,
-        rejected_reason_by_track_id=dict(rejected),
-        initialization_frame_by_track_id=initialization_frames,
-        initialization_depth_by_track_id=initialization_depths,
-        landmark_key_by_track_id=landmark_keys,
-        projection_records=records_tuple,
+        candidate_track_ids=tuple(candidate_tracks.tolist()),
+        accepted_track_ids=tuple(accepted_list),
+        rejected_reason_by_track_id=rejected,
+        initialization_frame_by_track_id=dict(
+            zip(accepted_list, initialization_frames[accepted_in_eligible].tolist())
+        ),
+        initialization_depth_by_track_id=dict(
+            zip(accepted_list, depths[accepted_in_eligible].tolist())
+        ),
+        landmark_key_by_track_id=dict(zip(accepted_list, landmark_keys)),
+        projection_factor_indices=np.arange(1, factor_count + 1, dtype=np.int64),
+        projection_frame_ids=factor_frames,
+        projection_track_ids=factor_tracks,
+        projection_measurements=factor_measurements,
         graph=graph,
         initial_values=initial,
         final_values=final,
@@ -457,6 +582,5 @@ def solve_bundle_window(
 __all__ = [
     "BundleWindowResult",
     "LandmarkEligibility",
-    "ProjectionFactorRecord",
     "solve_bundle_window",
 ]
