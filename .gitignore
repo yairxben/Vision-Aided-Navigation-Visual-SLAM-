@@ -20,3 +20,6 @@ results/
 
 # Local Claude Code settings
 .claude/
+
+# Native extension (built by tools/build_native.sh)
+generic_slam/_native*.so
