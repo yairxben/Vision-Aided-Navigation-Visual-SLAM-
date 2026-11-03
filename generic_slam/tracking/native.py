@@ -10,9 +10,11 @@ from __future__ import annotations
 import random
 from typing import Mapping
 
+import cv2
 import numpy as np
 
 from ..contracts import ContractError
+from ..frontend.features import ImageFeatures, StereoFeatures
 from ..frontend.pnp import CameraModel, required_hypothesis_count
 from ..frontend.stereo import compose_right_camera
 from .adapter import MatchArrays, PreparedStereoFrame
@@ -29,9 +31,17 @@ def _module():
     if _native is None:
         raise ContractError(
             "frontend.backend 'native' needs generic_slam._native; build it with "
-            "tools/build_native.sh ({})".format(_IMPORT_ERROR)
+            "tools/build_native.sh, or set frontend.backend to 'python' ({})".format(
+                _IMPORT_ERROR
+            )
         )
     return _native
+
+
+def require_native_module() -> None:
+    """Raise ContractError unless the native module is importable."""
+
+    _module()
 
 
 class NativeFrontend:
@@ -62,6 +72,30 @@ class NativeFrontend:
             )
         except self._native.ContractViolation as error:
             raise ContractError(str(error)) from error
+
+
+def stereo_features(frame) -> StereoFeatures:
+    """The Python frontend's StereoFeatures for a native frame (same values)."""
+
+    def keypoints(rows: np.ndarray):
+        return tuple(
+            cv2.KeyPoint(x, y, size, angle, response, int(octave), int(class_id))
+            for x, y, size, angle, response, octave, class_id in rows.tolist()
+        )
+
+    def matches(arrays):
+        query, train, distance = arrays
+        return tuple(
+            cv2.DMatch(q, t, 0, d)
+            for q, t, d in zip(query.tolist(), train.tolist(), distance.tolist())
+        )
+
+    return StereoFeatures(
+        left=ImageFeatures(keypoints(frame.left_keypoints()), frame.left_descriptors()),
+        right=ImageFeatures(keypoints(frame.right_keypoints()), frame.right_descriptors()),
+        inliers=matches(frame.inliers()),
+        outliers=matches(frame.outliers()),
+    )
 
 
 def prepare_native_frame(frame) -> PreparedStereoFrame:
@@ -155,4 +189,7 @@ def native_transition(
     return result, model, reciprocal
 
 
-__all__ = ["NativeFrontend", "native_transition", "prepare_native_frame"]
+__all__ = [
+    "NativeFrontend", "native_transition", "prepare_native_frame",
+    "require_native_module", "stereo_features",
+]

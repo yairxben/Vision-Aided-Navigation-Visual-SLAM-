@@ -163,6 +163,11 @@ def _prepare_dataset_stage(
 def prepare_run(request: RunRequest) -> PreparedRun:
     config_path = Path(request.config_path).expanduser().resolve() if request.config_path is not None else None
     config = resolve_algorithm_config(config_path)
+    if config.section("frontend")["backend"] == "native":
+        # Fail before any stage runs, not minutes into the run.
+        from .tracking.native import require_native_module
+
+        require_native_module()
     gt_convention = normalize_ground_truth_convention(request.gt_convention)
     dataset = discover_kitti_sequence(
         request.dataset_root,

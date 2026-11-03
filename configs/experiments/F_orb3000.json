@@ -1,5 +1,9 @@
 {
   "frontend": {
-    "detector": "orb"
+    "detector": "orb",
+    "backend": "python",
+    "stereo": {
+      "matching": "global_nearest"
+    }
   }
 }

@@ -17,6 +17,7 @@ SLAM/
 ├── run_slam.py         # entry point for the generic pipeline
 ├── pyproject.toml      # makes generic_slam installable
 ├── generic_slam/       # living, sequence-independent SLAM engine
+├── native/             # C++ frontend (generic_slam._native), built by tools/build_native.sh
 └── course_exercises/   # frozen course submission (self-contained)
 ```
 
@@ -25,6 +26,7 @@ SLAM/
 ```bash
 pip install -r requirements.txt
 pip install -e .        # optional: import/run generic_slam from any directory
+bash tools/build_native.sh   # C++ frontend (WSL/Linux; needs a static OpenCV 4.12.0, see the script)
 python run_slam.py --dataset-root <kitti-root> --sequence 00 --output-root outputs/seq00
 ```
 
@@ -37,7 +39,7 @@ Every stage (tracking database, keyframes, Bundle windows, Pose Graph, Loop Clos
 
 Readable results (`summary.md`, figures, statistics, config) are copied to `results/<run>_<timestamp>/`.
 
-Current defaults on KITTI 00 (AKAZE, temporal matching on stereo rows only): about 30 min end to end, RMSE with loops ≈ 2.1 m, 5 real loops. Speed-only changes are proven bit-identical with `tools/compare_runs.py`; changes that alter results are judged with two RANSAC seeds, because the seed alone moves RMSE by up to ~5–8%. Experiments and their outcomes: [`configs/experiments/README.md`](configs/experiments/README.md).
+Current defaults on KITTI 00 (AKAZE, row-band stereo matching, temporal matching on stereo rows only, C++ frontend): about 16 min end to end, RMSE with loops ≈ 1.84 m (mean of two seeds). The C++ frontend (`frontend.backend: "native"`) gives the same results as the Python one bit for bit; without the built module a run stops at once (set `frontend.backend` to `"python"` to run without it, e.g. for ORB or SIFT). Speed-only changes are proven bit-identical with `tools/compare_runs.py`; changes that alter results are judged with two RANSAC seeds, because the seed alone moves RMSE by up to ~5–8%. Experiments and their outcomes: [`configs/experiments/README.md`](configs/experiments/README.md).
 
 `course_exercises/` is the frozen course code. Its files are byte-identical to the submitted versions, so recorded source hashes stay valid. Run its scripts and tests from inside that folder (for example `cd course_exercises && python ex7.py`). It expects `dataset/` and `diagnostics/` inside `course_exercises/`.
 

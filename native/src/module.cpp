@@ -201,7 +201,8 @@ struct StereoFrame {
     std::vector<cv::KeyPoint> right;
     cv::Mat left_descriptors;
     cv::Mat right_descriptors;
-    std::vector<cv::DMatch> inliers;  // ascending queryIdx, one per left feature
+    std::vector<cv::DMatch> inliers;   // ascending queryIdx, one per left feature
+    std::vector<cv::DMatch> outliers;  // global matching only, ascending queryIdx
     std::size_t raw_match_count = 0;
 };
 
@@ -324,11 +325,14 @@ std::shared_ptr<StereoFrame> extract_stereo(const ByteArray& left_image, const B
                                                  matches);
     frame->raw_match_count = matches.size();
     for (const cv::DMatch& match : matches) {
-        if (stereo_geometry_valid(frame->left[static_cast<std::size_t>(match.queryIdx)].pt,
-                                  frame->right[static_cast<std::size_t>(match.trainIdx)].pt, settings)) {
-            frame->inliers.push_back(match);
-        }
+        (stereo_geometry_valid(frame->left[static_cast<std::size_t>(match.queryIdx)].pt,
+                               frame->right[static_cast<std::size_t>(match.trainIdx)].pt, settings)
+             ? frame->inliers
+             : frame->outliers)
+            .push_back(match);
     }
+    std::stable_sort(frame->outliers.begin(), frame->outliers.end(),
+                     [](const cv::DMatch& a, const cv::DMatch& b) { return a.queryIdx < b.queryIdx; });
     std::stable_sort(frame->inliers.begin(), frame->inliers.end(),
                      [](const cv::DMatch& a, const cv::DMatch& b) { return a.queryIdx < b.queryIdx; });
     return frame;
@@ -348,6 +352,42 @@ py::array_t<double> stereo_links(const StereoFrame& frame) {
         rows(i, 2) = (static_cast<double>(l.y) + static_cast<double>(r.y)) / 2;
     }
     return out;
+}
+
+// Keypoints as (N, 7): x, y, size, angle, response, octave, class_id.
+py::array_t<double> keypoint_array(const std::vector<cv::KeyPoint>& keypoints) {
+    const auto count = static_cast<py::ssize_t>(keypoints.size());
+    py::array_t<double> out({count, static_cast<py::ssize_t>(7)});
+    auto rows = out.mutable_unchecked<2>();
+    for (py::ssize_t i = 0; i < count; ++i) {
+        const cv::KeyPoint& k = keypoints[static_cast<std::size_t>(i)];
+        rows(i, 0) = k.pt.x;
+        rows(i, 1) = k.pt.y;
+        rows(i, 2) = k.size;
+        rows(i, 3) = k.angle;
+        rows(i, 4) = k.response;
+        rows(i, 5) = k.octave;
+        rows(i, 6) = k.class_id;
+    }
+    return out;
+}
+
+py::array_t<std::uint8_t> descriptor_array(const cv::Mat& descriptors) {
+    py::array_t<std::uint8_t> out({static_cast<py::ssize_t>(descriptors.rows),
+                                   static_cast<py::ssize_t>(descriptors.cols)});
+    if (descriptors.total()) std::memcpy(out.mutable_data(), descriptors.ptr(), descriptors.total());
+    return out;
+}
+
+py::tuple match_arrays(const std::vector<cv::DMatch>& matches) {
+    std::vector<std::int64_t> q, t;
+    std::vector<float> d;
+    for (const cv::DMatch& m : matches) {
+        q.push_back(m.queryIdx);
+        t.push_back(m.trainIdx);
+        d.push_back(m.distance);
+    }
+    return py::make_tuple(vector_array(q), vector_array(t), vector_array(d));
 }
 
 py::array_t<std::int64_t> stereo_rows(const StereoFrame& frame) {
@@ -708,23 +748,7 @@ py::tuple akaze_detect_and_compute(const ByteArray& image, double threshold) {
         py::gil_scoped_release release;
         make_akaze(threshold)->detectAndCompute(view, cv::noArray(), keypoints, descriptors);
     }
-    const auto count = static_cast<py::ssize_t>(keypoints.size());
-    py::array_t<double> points({count, static_cast<py::ssize_t>(7)});
-    auto rows = points.mutable_unchecked<2>();
-    for (py::ssize_t i = 0; i < count; ++i) {
-        const cv::KeyPoint& k = keypoints[static_cast<std::size_t>(i)];
-        rows(i, 0) = k.pt.x;
-        rows(i, 1) = k.pt.y;
-        rows(i, 2) = k.size;
-        rows(i, 3) = k.angle;
-        rows(i, 4) = k.response;
-        rows(i, 5) = k.octave;
-        rows(i, 6) = k.class_id;
-    }
-    py::array_t<std::uint8_t> bytes({static_cast<py::ssize_t>(descriptors.rows),
-                                     static_cast<py::ssize_t>(descriptors.cols)});
-    if (descriptors.total()) std::memcpy(bytes.mutable_data(), descriptors.ptr(), descriptors.total());
-    return py::make_tuple(points, bytes);
+    return py::make_tuple(keypoint_array(keypoints), descriptor_array(descriptors));
 }
 
 py::tuple hamming_match(const ByteArray& query, const ByteArray& train) {
@@ -735,14 +759,7 @@ py::tuple hamming_match(const ByteArray& query, const ByteArray& train) {
         py::gil_scoped_release release;
         cv::BFMatcher(cv::NORM_HAMMING, false).match(query_view, train_view, matches);
     }
-    std::vector<std::int64_t> q, t;
-    std::vector<float> d;
-    for (const cv::DMatch& m : matches) {
-        q.push_back(m.queryIdx);
-        t.push_back(m.trainIdx);
-        d.push_back(m.distance);
-    }
-    return py::make_tuple(vector_array(q), vector_array(t), vector_array(d));
+    return match_arrays(matches);
 }
 
 }  // namespace
@@ -759,7 +776,15 @@ PYBIND11_MODULE(_native, module) {
         .def_property_readonly("stereo_row_count", [](const StereoFrame& f) { return f.inliers.size(); })
         .def_property_readonly("raw_match_count", [](const StereoFrame& f) { return f.raw_match_count; })
         .def("links", &stereo_links, "(rows, 3): u_left, u_right, mean row, one row per stereo inlier")
-        .def("stereo_rows", &stereo_rows, "Ascending left-feature index of each stereo inlier");
+        .def("stereo_rows", &stereo_rows, "Ascending left-feature index of each stereo inlier")
+        .def("left_keypoints", [](const StereoFrame& f) { return keypoint_array(f.left); })
+        .def("right_keypoints", [](const StereoFrame& f) { return keypoint_array(f.right); })
+        .def("left_descriptors", [](const StereoFrame& f) { return descriptor_array(f.left_descriptors); })
+        .def("right_descriptors", [](const StereoFrame& f) { return descriptor_array(f.right_descriptors); })
+        .def("inliers", [](const StereoFrame& f) { return match_arrays(f.inliers); },
+             "(query, train, distance) of the stereo inliers")
+        .def("outliers", [](const StereoFrame& f) { return match_arrays(f.outliers); },
+             "(query, train, distance) of the rejected global matches");
 
     module.def("extract_stereo", &extract_stereo, py::arg("left_image"), py::arg("right_image"),
                py::arg("threshold"), py::arg("maximum_vertical_deviation_px"),

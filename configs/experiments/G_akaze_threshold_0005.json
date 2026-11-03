@@ -2,6 +2,9 @@
   "frontend": {
     "akaze": {
       "threshold": 0.0005
+    },
+    "stereo": {
+      "matching": "global_nearest"
     }
   }
 }

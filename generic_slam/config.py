@@ -29,10 +29,11 @@ FRONTEND_BACKENDS = ("python", "native")
 
 DEFAULT_ALGORITHM_CONFIG: Dict[str, Any] = {
     "frontend": {
-        # Tracking implementation. "native": the C++ module generic_slam._native
-        # (build with tools/build_native.sh); same results as "python", bit for
-        # bit, for the akaze detector and the stereo_rows temporal population.
-        "backend": "python",
+        # Frontend implementation. "native" (default): the C++ module
+        # generic_slam._native, built with tools/build_native.sh; a run without
+        # it stops at once. It gives the same results as "python", bit for bit,
+        # for the akaze detector and the stereo_rows temporal population.
+        "backend": "native",
         # "akaze", "orb": binary descriptors, exact brute-force Hamming matching.
         # "sift": float descriptors, FLANN KD-tree matching (settings below).
         "detector": "akaze",
@@ -59,12 +60,14 @@ DEFAULT_ALGORITHM_CONFIG: Dict[str, Any] = {
         "stereo": {
             "maximum_vertical_deviation_px": 2.0,
             "require_positive_disparity": True,
+            # "row_band" (default): nearest among right features that pass the
+            # row/disparity check, filtered by row_band_uniqueness: "mutual"
+            # (one-to-one within the band) or "ratio" (best < row_band_ratio *
+            # second best). On KITTI 00 (2 seeds): RMSE with loops 2.10 -> 1.84 m
+            # and, native, 22 ms/frame cheaper than "global_nearest".
             # "global_nearest": each left feature's nearest right descriptor in
-            # the whole image, kept only if it passes the row/disparity check.
-            # "row_band": nearest among right features that pass the check
-            # (cheaper), filtered by row_band_uniqueness: "mutual" (one-to-one
-            # within the band) or "ratio" (best < row_band_ratio * second best).
-            "matching": "global_nearest",
+            # the whole image, kept only if it passes the check.
+            "matching": "row_band",
             "row_band_uniqueness": "mutual",
             "row_band_ratio": 0.8,
         },

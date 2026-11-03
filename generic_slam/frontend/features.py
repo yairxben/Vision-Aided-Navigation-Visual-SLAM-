@@ -101,6 +101,12 @@ class FeatureFrontend:
         self.require_positive_disparity = bool(
             stereo["require_positive_disparity"]
         )
+        self._native = None
+        if frontend_config["backend"] == "native":
+            # Stereo extraction in C++ (identical results); matching stays here.
+            from ..tracking.native import NativeFrontend
+
+            self._native = NativeFrontend(frontend_config)
         self.stereo_matching = str(stereo["matching"])
         self.row_band_uniqueness = str(stereo["row_band_uniqueness"])
         self.row_band_ratio = float(stereo["row_band_ratio"])
@@ -151,6 +157,10 @@ class FeatureFrontend:
     def extract_stereo(
         self, left_image: np.ndarray, right_image: np.ndarray
     ) -> StereoFeatures:
+        if self._native is not None:
+            from ..tracking.native import stereo_features
+
+            return stereo_features(self._native.extract_stereo(left_image, right_image))
         # Detection has no random state, so the two images run in parallel.
         right_future = _side_executor().submit(
             self._extract_with, self._right_detector, right_image, "right stereo image"
