@@ -27,11 +27,12 @@ from ..config import AlgorithmConfig
 from ..contracts import ContractError
 from ..dataset.kitti import KittiEstimationContext
 from ..frontend.features import FeatureFrontend, StereoFeatures, stereo_rows
-from ..frontend.pnp import reset_random_generators, run_visual_odometry_ransac
+from ..frontend.pnp import CameraModel, reset_random_generators, run_visual_odometry_ransac
 from ..frontend.stereo import compose_right_camera, project_points, triangulate_stereo_matches
-from ..frontend.temporal import build_four_view_consensus
+from ..frontend.temporal import actual_consensus_pixels, build_four_view_consensus
 from ..geometry import camera_center, homogeneous, validate_rigid_pose
 from .adapter import PreparedStereoFrame, TrackingStoreAdapter, prepare_stereo_frame
+from .native import NativeFrontend, native_transition, prepare_native_frame
 from .store import TrackStore, validate_track_store
 
 
@@ -124,6 +125,133 @@ def _prepared(stereo: StereoFeatures) -> PreparedStereoFrame:
 
 
 TRACK_STORE_ARTIFACT = "track_observations.npz"
+
+
+@dataclass(frozen=True)
+class _TransitionStep:
+    """One VO transition, whichever frontend backend computed it."""
+
+    current_prepared: PreparedStereoFrame
+    reciprocal: object  # Sequence[cv2.DMatch] or MatchArrays
+    consensus: np.ndarray  # (N, 3): previous stereo, current stereo, temporal index
+    supporter_indices: np.ndarray  # rows of consensus, ascending
+    model: CameraModel
+    attempts: int
+    consensus_points: np.ndarray  # (N, 3) triangulated previous-frame points
+    observed_pixels: np.ndarray  # (4, 2, N)
+    previous_left_feature_count: int
+    current_left_feature_count: int
+    previous_stereo_row_count: int
+    current_stereo_row_count: int
+
+
+def _python_step(
+    frontend: FeatureFrontend,
+    previous_stereo: StereoFeatures,
+    current_stereo: StereoFeatures,
+    previous_pose: np.ndarray,
+    intrinsic: np.ndarray,
+    fixed_right: np.ndarray,
+    vo_ransac: Mapping[str, object],
+    match_stereo_rows_only: bool,
+) -> _TransitionStep:
+    previous_right_rotation, previous_right_translation = compose_right_camera(
+        previous_pose[:3, :3], previous_pose[:3, 3:],
+        fixed_right[:3, :3], fixed_right[:3, 3:],
+    )
+    point_cloud = triangulate_stereo_matches(
+        previous_stereo.left.keypoints,
+        previous_stereo.right.keypoints,
+        previous_stereo.inliers,
+        intrinsic,
+        previous_pose[:3, :3],
+        previous_pose[:3, 3:],
+        previous_right_rotation,
+        previous_right_translation,
+    )
+    current_prepared = _prepared(current_stereo)
+    if match_stereo_rows_only:
+        reciprocal = frontend.reciprocal_matches_on_rows(
+            previous_stereo.left.descriptors, stereo_rows(previous_stereo),
+            current_stereo.left.descriptors, stereo_rows(current_stereo),
+        )
+    else:
+        reciprocal = frontend.reciprocal_matches(
+            previous_stereo.left.descriptors,
+            current_stereo.left.descriptors,
+        )
+    consensus = build_four_view_consensus(
+        previous_stereo.inliers, current_stereo.inliers, reciprocal
+    )
+    ransac = run_visual_odometry_ransac(
+        point_cloud,
+        consensus,
+        previous_stereo.inliers,
+        current_stereo.inliers,
+        previous_stereo.left.keypoints,
+        previous_stereo.right.keypoints,
+        current_stereo.left.keypoints,
+        current_stereo.right.keypoints,
+        intrinsic,
+        previous_pose[:3, :3],
+        previous_pose[:3, 3:],
+        fixed_right[:3, :3],
+        fixed_right[:3, 3:],
+        success_probability=float(vo_ransac["success_probability"]),
+        initial_outlier_probability=float(vo_ransac["initial_outlier_probability"]),
+        sample_size=int(vo_ransac["sample_size"]),
+        maximum_distance_px=float(vo_ransac["supporter_max_distance_px"]),
+        maximum_attempts=vo_ransac["maximum_hypothesis_attempts"],
+    )
+    consensus_points = point_cloud[
+        np.asarray([item.previous_stereo_index for item in consensus], dtype=int)
+    ]
+    observed = np.empty((4, 2, 0), dtype=float)
+    if consensus:
+        observed = actual_consensus_pixels(
+            consensus, previous_stereo.inliers, current_stereo.inliers,
+            previous_stereo.left.keypoints, previous_stereo.right.keypoints,
+            current_stereo.left.keypoints, current_stereo.right.keypoints,
+        )
+    return _TransitionStep(
+        current_prepared=current_prepared,
+        reciprocal=reciprocal,
+        consensus=np.asarray(
+            [item.as_tuple() for item in consensus], dtype=np.int64
+        ).reshape(-1, 3),
+        supporter_indices=np.asarray(ransac.supporter_indices, dtype=np.int64),
+        model=ransac.model,
+        attempts=ransac.total_hypothesis_attempt_count,
+        consensus_points=consensus_points,
+        observed_pixels=observed,
+        previous_left_feature_count=len(previous_stereo.left.keypoints),
+        current_left_feature_count=len(current_stereo.left.keypoints),
+        previous_stereo_row_count=len(previous_stereo.inliers),
+        current_stereo_row_count=len(current_stereo.inliers),
+    )
+
+
+def _native_step(
+    previous, current, previous_pose: np.ndarray, intrinsic: np.ndarray,
+    fixed_right: np.ndarray, vo_ransac: Mapping[str, object],
+) -> _TransitionStep:
+    result, model, reciprocal = native_transition(
+        previous, current, previous_pose, intrinsic, fixed_right, vo_ransac
+    )
+    return _TransitionStep(
+        current_prepared=prepare_native_frame(current),
+        reciprocal=reciprocal,
+        consensus=result["consensus"],
+        supporter_indices=result["supporter_indices"],
+        model=model,
+        attempts=int(result["attempts"]),
+        consensus_points=result["consensus_points"],
+        observed_pixels=result["observed_pixels"],
+        previous_left_feature_count=int(previous.left_feature_count),
+        current_left_feature_count=int(current.left_feature_count),
+        previous_stereo_row_count=int(previous.stereo_row_count),
+        current_stereo_row_count=int(current.stereo_row_count),
+    )
 
 
 def _load_database(root: Path, frame_count: int) -> TrackStore:
@@ -274,7 +402,10 @@ def run_tracking_stage(
     writer = _BackgroundWriter()
     try:
         reset_random_generators(int(config.section("visual_odometry")["seed"]))
-        frontend = FeatureFrontend(config.section("frontend"))
+        frontend_config = config.section("frontend")
+        native = frontend_config["backend"] == "native"
+        frontend = (NativeFrontend if native else FeatureFrontend)(frontend_config)
+        prepare = prepare_native_frame if native else _prepared
         calibration = dataset.calibration
         intrinsic = calibration.intrinsic
         initial_left = calibration.left_extrinsic
@@ -285,80 +416,40 @@ def run_tracking_stage(
 
         frames = _stereo_frames(dataset, frontend, frame_count)
         previous_stereo = next(frames)
-        previous_prepared = _prepared(previous_stereo)
-        adapter.add_initial(previous_prepared)
+        adapter.add_initial(prepare(previous_stereo))
         evidence_root = attempt / "transition_evidence"
         evidence_root.mkdir()
         vo_ransac = config.section("visual_odometry")["ransac"]
         match_stereo_rows_only = (
-            config.section("frontend")["temporal_matching"]["population"] == "stereo_rows"
+            frontend_config["temporal_matching"]["population"] == "stereo_rows"
         )
 
         for current_frame_id in range(1, frame_count):
             transition_started = time.perf_counter()
             previous_pose = world_to_camera[-1]
-            previous_right_rotation, previous_right_translation = compose_right_camera(
-                previous_pose[:3, :3], previous_pose[:3, 3:],
-                fixed_right[:3, :3], fixed_right[:3, 3:],
-            )
-            point_cloud = triangulate_stereo_matches(
-                previous_stereo.left.keypoints,
-                previous_stereo.right.keypoints,
-                previous_stereo.inliers,
-                intrinsic,
-                previous_pose[:3, :3],
-                previous_pose[:3, 3:],
-                previous_right_rotation,
-                previous_right_translation,
-            )
             current_stereo = next(frames)
-            current_prepared = _prepared(current_stereo)
-            if match_stereo_rows_only:
-                reciprocal = frontend.reciprocal_matches_on_rows(
-                    previous_stereo.left.descriptors, stereo_rows(previous_stereo),
-                    current_stereo.left.descriptors, stereo_rows(current_stereo),
+            if native:
+                step = _native_step(
+                    previous_stereo, current_stereo, previous_pose, intrinsic,
+                    fixed_right, vo_ransac,
                 )
             else:
-                reciprocal = frontend.reciprocal_matches(
-                    previous_stereo.left.descriptors,
-                    current_stereo.left.descriptors,
+                step = _python_step(
+                    frontend, previous_stereo, current_stereo, previous_pose, intrinsic,
+                    fixed_right, vo_ransac, match_stereo_rows_only,
                 )
-            consensus = build_four_view_consensus(
-                previous_stereo.inliers, current_stereo.inliers, reciprocal
-            )
-            ransac = run_visual_odometry_ransac(
-                point_cloud,
-                consensus,
-                previous_stereo.inliers,
-                current_stereo.inliers,
-                previous_stereo.left.keypoints,
-                previous_stereo.right.keypoints,
-                current_stereo.left.keypoints,
-                current_stereo.right.keypoints,
-                intrinsic,
-                previous_pose[:3, :3],
-                previous_pose[:3, 3:],
-                fixed_right[:3, :3],
-                fixed_right[:3, 3:],
-                success_probability=float(vo_ransac["success_probability"]),
-                initial_outlier_probability=float(vo_ransac["initial_outlier_probability"]),
-                sample_size=int(vo_ransac["sample_size"]),
-                maximum_distance_px=float(vo_ransac["supporter_max_distance_px"]),
-                maximum_attempts=vo_ransac["maximum_hypothesis_attempts"],
-            )
-            pose = homogeneous(
-                np.hstack((ransac.model.rotations[2], ransac.model.translations[2]))
-            )
+            model = step.model
+            pose = homogeneous(np.hstack((model.rotations[2], model.translations[2])))
             supporter_temporal_indices = tuple(
-                item.temporal_match_index for item in ransac.supporters
+                step.consensus[step.supporter_indices, 2].tolist()
             )
             tracks_before = set(adapter.database.tracks(current_frame_id - 1).tolist())
             last_track_before = adapter.database.last_track_id
             issued, prepared_transition = adapter.add_transition(
-                current_prepared,
-                reciprocal,
+                step.current_prepared,
+                step.reciprocal,
                 supporter_temporal_indices,
-                len(consensus),
+                len(step.consensus),
             )
             if issued != current_frame_id:
                 raise ContractError("issued tracking FrameId differs")
@@ -368,48 +459,37 @@ def run_tracking_stage(
             terminated = tracks_before.difference(tracks_after)
             world_to_camera.append(pose)
 
-            consensus_points = point_cloud[
-                np.asarray([item.previous_stereo_index for item in consensus], dtype=int)
-            ]
-            observed = np.empty((4, 2, 0), dtype=float)
             projected = np.empty((4, 2, 0), dtype=float)
-            if consensus:
-                from ..frontend.temporal import actual_consensus_pixels
-                observed = actual_consensus_pixels(
-                    consensus, previous_stereo.inliers, current_stereo.inliers,
-                    previous_stereo.left.keypoints, previous_stereo.right.keypoints,
-                    current_stereo.left.keypoints, current_stereo.right.keypoints,
-                )
+            if len(step.consensus):
                 projected = project_points(
-                    consensus_points, intrinsic, ransac.model.rotations,
-                    ransac.model.translations,
+                    step.consensus_points, intrinsic, model.rotations, model.translations,
                 )
             writer.submit(
                 save_npz_atomic,
                 evidence_root / "transition_{:06d}_{:06d}.npz".format(
                     current_frame_id - 1, current_frame_id
                 ),
-                consensus=np.asarray([item.as_tuple() for item in consensus], dtype=np.int64).reshape(-1, 3),
-                supporter_indices=np.asarray(ransac.supporter_indices, dtype=np.int64),
-                observed_pixels=observed,
+                consensus=step.consensus,
+                supporter_indices=step.supporter_indices,
+                observed_pixels=step.observed_pixels,
                 projected_pixels=projected,
             )
             transitions.append(
                 {
                     "previous_frame_id": current_frame_id - 1,
                     "current_frame_id": current_frame_id,
-                    "previous_left_feature_count": len(previous_stereo.left.keypoints),
-                    "current_left_feature_count": len(current_stereo.left.keypoints),
-                    "previous_stereo_row_count": len(previous_stereo.inliers),
-                    "current_stereo_row_count": len(current_stereo.inliers),
-                    "reciprocal_match_count": len(reciprocal),
-                    "consensus_count": len(consensus),
-                    "supporter_count": len(ransac.supporters),
+                    "previous_left_feature_count": step.previous_left_feature_count,
+                    "current_left_feature_count": step.current_left_feature_count,
+                    "previous_stereo_row_count": step.previous_stereo_row_count,
+                    "current_stereo_row_count": step.current_stereo_row_count,
+                    "reciprocal_match_count": len(step.reciprocal),
+                    "consensus_count": len(step.consensus),
+                    "supporter_count": len(step.supporter_indices),
                     "supporter_percentage": prepared_transition.supporter_percentage,
                     "tracks_created": len(created),
                     "tracks_extended": len(extended),
                     "tracks_terminated": len(terminated),
-                    "ransac_hypothesis_attempt_count": ransac.total_hypothesis_attempt_count,
+                    "ransac_hypothesis_attempt_count": step.attempts,
                     "runtime_seconds": time.perf_counter() - transition_started,
                 }
             )

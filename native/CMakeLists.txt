@@ -18,6 +18,9 @@ endif()
 
 pybind11_add_module(_native src/module.cpp)
 target_link_libraries(_native PRIVATE ${OpenCV_LIBS})
+# Bit-identical arithmetic with the Python path: explicit std::fma where numpy's
+# OpenBLAS kernels fuse, and never an implicit a * b + c contraction elsewhere.
+target_compile_options(_native PRIVATE -mfma -mavx2 -ffp-contract=off)
 # Keep the statically linked OpenCV private: pip's cv2 lives in the same process.
 target_link_options(_native PRIVATE "-Wl,--exclude-libs,ALL")
 # tools/build_native.sh copies the module into generic_slam/ (the repository

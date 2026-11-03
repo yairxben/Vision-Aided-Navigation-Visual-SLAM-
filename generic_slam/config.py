@@ -24,10 +24,15 @@ BINARY_DETECTORS = ("akaze", "orb")
 TEMPORAL_MATCHING_POPULATIONS = ("all_features", "stereo_rows")
 STEREO_MATCHING_MODES = ("global_nearest", "row_band")
 ROW_BAND_UNIQUENESS_TESTS = ("mutual", "ratio")
+FRONTEND_BACKENDS = ("python", "native")
 
 
 DEFAULT_ALGORITHM_CONFIG: Dict[str, Any] = {
     "frontend": {
+        # Tracking implementation. "native": the C++ module generic_slam._native
+        # (build with tools/build_native.sh); same results as "python", bit for
+        # bit, for the akaze / global_nearest / stereo_rows settings it supports.
+        "backend": "python",
         # "akaze", "orb": binary descriptors, exact brute-force Hamming matching.
         # "sift": float descriptors, FLANN KD-tree matching (settings below).
         "detector": "akaze",
@@ -249,6 +254,19 @@ def validate_algorithm_config(config: Mapping[str, Any]) -> None:
             "frontend.temporal_matching.population must be one of {}".format(
                 ", ".join(TEMPORAL_MATCHING_POPULATIONS)
             )
+        )
+    if frontend["backend"] not in FRONTEND_BACKENDS:
+        raise ContractError(
+            "frontend.backend must be one of {}".format(", ".join(FRONTEND_BACKENDS))
+        )
+    if frontend["backend"] == "native" and (
+        frontend["detector"] != "akaze"
+        or frontend["stereo"]["matching"] != "global_nearest"
+        or frontend["temporal_matching"]["population"] != "stereo_rows"
+    ):
+        raise ContractError(
+            "frontend.backend 'native' supports detector 'akaze', stereo matching "
+            "'global_nearest' and temporal population 'stereo_rows' only"
         )
 
     vo = config["visual_odometry"]

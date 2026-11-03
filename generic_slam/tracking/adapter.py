@@ -36,7 +36,25 @@ class PreparedTemporalTransition:
     rejected_conflict: int
 
 
+@dataclass(frozen=True)
+class MatchArrays:
+    """Matches as parallel arrays (the native frontend's representation)."""
+
+    query: np.ndarray
+    train: np.ndarray
+    distance: np.ndarray
+
+    def __len__(self) -> int:
+        return len(self.query)
+
+
 def _match_arrays(matches: Sequence[cv2.DMatch]) -> Tuple[np.ndarray, np.ndarray, np.ndarray]:
+    if isinstance(matches, MatchArrays):
+        return (
+            np.asarray(matches.query, dtype=np.int64),
+            np.asarray(matches.train, dtype=np.int64),
+            np.asarray(matches.distance, dtype=float),
+        )
     query = np.fromiter((match.queryIdx for match in matches), dtype=np.int64, count=len(matches))
     train = np.fromiter((match.trainIdx for match in matches), dtype=np.int64, count=len(matches))
     distance = np.fromiter(
@@ -199,6 +217,6 @@ class TrackingStoreAdapter:
 
 
 __all__ = [
-    "PreparedStereoFrame", "PreparedTemporalTransition", "TrackingStoreAdapter",
-    "prepare_stereo_frame", "prepare_temporal_transition",
+    "MatchArrays", "PreparedStereoFrame", "PreparedTemporalTransition",
+    "TrackingStoreAdapter", "prepare_stereo_frame", "prepare_temporal_transition",
 ]
