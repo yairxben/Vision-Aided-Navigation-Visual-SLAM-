@@ -17,6 +17,7 @@
 
 #include <opencv2/calib3d.hpp>
 #include <opencv2/core.hpp>
+#include <opencv2/core/hal/hal.hpp>
 #include <opencv2/features2d.hpp>
 
 #include <algorithm>
@@ -25,6 +26,7 @@
 #include <cstdint>
 #include <cstring>
 #include <future>
+#include <limits>
 #include <memory>
 #include <optional>
 #include <stdexcept>
@@ -209,9 +211,91 @@ cv::Ptr<cv::AKAZE> make_akaze(double threshold) {
                              cv::KAZE::DIFF_PM_G2);
 }
 
+struct StereoSettings {
+    double maximum_vertical_deviation_px;
+    bool require_positive_disparity;
+    bool row_band;  // else global nearest
+    bool mutual;    // row band uniqueness; else ratio
+    double ratio;
+};
+
+bool stereo_geometry_valid(const cv::Point2f& l, const cv::Point2f& r, const StereoSettings& s) {
+    const bool rectified = std::fabs(static_cast<double>(l.y) - static_cast<double>(r.y)) <=
+                           s.maximum_vertical_deviation_px;
+    const bool positive = static_cast<double>(l.x) - static_cast<double>(r.x) > 0.0;
+    return rectified && (positive || !s.require_positive_disparity);
+}
+
+// FeatureFrontend._row_band_matches: the nearest geometrically valid right
+// feature of each left feature (ties to the lower index), then made unique.
+std::vector<cv::DMatch> row_band_matches(const StereoFrame& frame, const StereoSettings& s) {
+    const std::size_t left_count = frame.left.size(), right_count = frame.right.size();
+    std::vector<int> order(right_count);
+    for (std::size_t i = 0; i < right_count; ++i) order[i] = static_cast<int>(i);
+    std::stable_sort(order.begin(), order.end(), [&](int a, int b) {
+        return frame.right[static_cast<std::size_t>(a)].pt.y < frame.right[static_cast<std::size_t>(b)].pt.y;
+    });
+    std::vector<double> sorted_y(right_count);
+    for (std::size_t i = 0; i < right_count; ++i) sorted_y[i] = frame.right[static_cast<std::size_t>(order[i])].pt.y;
+    struct Best {
+        int index = -1;
+        int distance = 0;
+        bool beaten_by(int d, int i) const { return index < 0 || d < distance || (d == distance && i < index); }
+    };
+    std::vector<Best> best_right(left_count), best_left(right_count);
+    std::vector<double> second(left_count, std::numeric_limits<double>::infinity());
+    const int bytes = frame.left_descriptors.cols;
+    // The scan range is a superset; the exact Python geometry test decides.
+    const double margin = s.maximum_vertical_deviation_px + 1.0;
+    for (std::size_t l = 0; l < left_count; ++l) {
+        const cv::Point2f& lp = frame.left[l].pt;
+        const double y = lp.y;
+        const std::uint8_t* query = frame.left_descriptors.ptr<std::uint8_t>(static_cast<int>(l));
+        for (auto k = static_cast<std::size_t>(
+                 std::lower_bound(sorted_y.begin(), sorted_y.end(), y - margin) - sorted_y.begin());
+             k < right_count && sorted_y[k] <= y + margin; ++k) {
+            const int r = order[k];
+            if (!stereo_geometry_valid(lp, frame.right[static_cast<std::size_t>(r)].pt, s)) continue;
+            const int d = cv::hal::normHamming(
+                query, frame.right_descriptors.ptr<std::uint8_t>(r), bytes);
+            Best& mine = best_right[l];
+            if (mine.beaten_by(d, r)) {
+                if (mine.index >= 0) second[l] = mine.distance;
+                mine = {r, d};
+            } else if (d < second[l]) {
+                second[l] = d;
+            }
+            Best& theirs = best_left[static_cast<std::size_t>(r)];
+            if (theirs.beaten_by(d, static_cast<int>(l))) theirs = {static_cast<int>(l), d};
+        }
+    }
+    std::vector<cv::DMatch> matches;
+    for (std::size_t l = 0; l < left_count; ++l) {
+        const Best& best = best_right[l];
+        if (best.index < 0) continue;
+        const bool keep = s.mutual
+                              ? best_left[static_cast<std::size_t>(best.index)].index == static_cast<int>(l)
+                              : best.distance < s.ratio * second[l];
+        if (keep) matches.emplace_back(static_cast<int>(l), best.index, 0, static_cast<float>(best.distance));
+    }
+    return matches;
+}
+
 std::shared_ptr<StereoFrame> extract_stereo(const ByteArray& left_image, const ByteArray& right_image,
                                             double threshold, double maximum_vertical_deviation_px,
-                                            bool require_positive_disparity) {
+                                            bool require_positive_disparity,
+                                            const std::string& stereo_matching,
+                                            const std::string& row_band_uniqueness,
+                                            double row_band_ratio) {
+    if (stereo_matching != "global_nearest" && stereo_matching != "row_band") {
+        throw std::invalid_argument("unsupported stereo matching: " + stereo_matching);
+    }
+    if (row_band_uniqueness != "mutual" && row_band_uniqueness != "ratio") {
+        throw std::invalid_argument("unsupported row band uniqueness: " + row_band_uniqueness);
+    }
+    const StereoSettings settings{maximum_vertical_deviation_px, require_positive_disparity,
+                                  stereo_matching == "row_band", row_band_uniqueness == "mutual",
+                                  row_band_ratio};
     const cv::Mat left_view = view_bytes(left_image, "left stereo image");
     const cv::Mat right_view = view_bytes(right_image, "right stereo image");
     auto frame = std::make_shared<StereoFrame>();
@@ -230,17 +314,20 @@ std::shared_ptr<StereoFrame> extract_stereo(const ByteArray& left_image, const B
     if (frame->right_descriptors.empty()) {
         throw ContractViolation("feature detector produced no descriptors for right stereo image");
     }
+    if (settings.row_band) {
+        frame->inliers = row_band_matches(*frame, settings);
+        frame->raw_match_count = frame->inliers.size();  // the Python path keeps no outliers
+        return frame;
+    }
     std::vector<cv::DMatch> matches;
     cv::BFMatcher(cv::NORM_HAMMING, false).match(frame->left_descriptors, frame->right_descriptors,
                                                  matches);
     frame->raw_match_count = matches.size();
     for (const cv::DMatch& match : matches) {
-        const cv::Point2f& l = frame->left[static_cast<std::size_t>(match.queryIdx)].pt;
-        const cv::Point2f& r = frame->right[static_cast<std::size_t>(match.trainIdx)].pt;
-        const bool rectified = std::fabs(static_cast<double>(l.y) - static_cast<double>(r.y)) <=
-                               maximum_vertical_deviation_px;
-        const bool positive = static_cast<double>(l.x) - static_cast<double>(r.x) > 0.0;
-        if (rectified && (positive || !require_positive_disparity)) frame->inliers.push_back(match);
+        if (stereo_geometry_valid(frame->left[static_cast<std::size_t>(match.queryIdx)].pt,
+                                  frame->right[static_cast<std::size_t>(match.trainIdx)].pt, settings)) {
+            frame->inliers.push_back(match);
+        }
     }
     std::stable_sort(frame->inliers.begin(), frame->inliers.end(),
                      [](const cv::DMatch& a, const cv::DMatch& b) { return a.queryIdx < b.queryIdx; });
@@ -676,8 +763,9 @@ PYBIND11_MODULE(_native, module) {
 
     module.def("extract_stereo", &extract_stereo, py::arg("left_image"), py::arg("right_image"),
                py::arg("threshold"), py::arg("maximum_vertical_deviation_px"),
-               py::arg("require_positive_disparity"),
-               "AKAZE on both images and the global-nearest stereo matches that pass the geometry.");
+               py::arg("require_positive_disparity"), py::arg("stereo_matching") = "global_nearest",
+               py::arg("row_band_uniqueness") = "mutual", py::arg("row_band_ratio") = 0.8,
+               "AKAZE on both images and their stereo matches (frontend.stereo semantics).");
     module.def("track_transition", &track_transition, py::arg("previous"), py::arg("current"),
                py::arg("projection_left"), py::arg("projection_right"), py::arg("intrinsic"),
                py::arg("previous_left_rotation"), py::arg("previous_left_translation"),

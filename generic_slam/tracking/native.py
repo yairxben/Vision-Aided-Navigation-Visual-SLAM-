@@ -35,7 +35,7 @@ def _module():
 
 
 class NativeFrontend:
-    """Stereo extraction for the native backend (AKAZE, global nearest match)."""
+    """Stereo extraction for the native backend (AKAZE, configured stereo matching)."""
 
     # Brute-force Hamming matching has no random state.
     is_deterministic = True
@@ -45,6 +45,9 @@ class NativeFrontend:
         self._threshold = float(frontend_config["akaze"]["threshold"])
         self._maximum_vertical_deviation_px = float(stereo["maximum_vertical_deviation_px"])
         self._require_positive_disparity = bool(stereo["require_positive_disparity"])
+        self._stereo_matching = str(stereo["matching"])
+        self._row_band_uniqueness = str(stereo["row_band_uniqueness"])
+        self._row_band_ratio = float(stereo["row_band_ratio"])
         self._native = _module()
 
     def extract_stereo(self, left_image: np.ndarray, right_image: np.ndarray):
@@ -55,6 +58,7 @@ class NativeFrontend:
             return self._native.extract_stereo(
                 left_image, right_image, self._threshold,
                 self._maximum_vertical_deviation_px, self._require_positive_disparity,
+                self._stereo_matching, self._row_band_uniqueness, self._row_band_ratio,
             )
         except self._native.ContractViolation as error:
             raise ContractError(str(error)) from error
