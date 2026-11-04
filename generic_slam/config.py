@@ -79,6 +79,15 @@ DEFAULT_ALGORITHM_CONFIG: Dict[str, Any] = {
             # within the RANSAC seed noise (2 seeds; configs/experiments).
             # "all_features": every detected feature (the original behaviour).
             "population": "stereo_rows",
+            # Native backend only. A radius in pixels: match each previous point
+            # only against current features within this distance of its
+            # projection into a constant-velocity pose prediction. null: match
+            # all rows. On KITTI 00 every RANSAC supporter lies within 19.3 px
+            # of that prediction. The first transition, and any whose windowed
+            # matching finds fewer than window_fallback_minimum_matches
+            # matches, use full matching instead.
+            "prediction_window_px": None,
+            "window_fallback_minimum_matches": 200,
         },
     },
     "visual_odometry": {
@@ -270,6 +279,18 @@ def validate_algorithm_config(config: Mapping[str, Any]) -> None:
             "frontend.backend 'native' supports detector 'akaze' and temporal "
             "population 'stereo_rows' only"
         )
+    temporal = frontend["temporal_matching"]
+    if temporal["prediction_window_px"] is not None:
+        if _number(temporal["prediction_window_px"], "frontend.temporal_matching.prediction_window_px") <= 0.0:
+            raise ContractError("frontend.temporal_matching.prediction_window_px must be positive")
+        if frontend["backend"] != "native":
+            raise ContractError(
+                "frontend.temporal_matching.prediction_window_px needs frontend.backend 'native'"
+            )
+    _positive_integer(
+        temporal["window_fallback_minimum_matches"],
+        "frontend.temporal_matching.window_fallback_minimum_matches",
+    )
 
     vo = config["visual_odometry"]
     _nonnegative_integer(vo["seed"], "visual_odometry.seed")

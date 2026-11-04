@@ -30,6 +30,7 @@
 #include <memory>
 #include <optional>
 #include <stdexcept>
+#include <unordered_map>
 #include <unordered_set>
 #include <vector>
 
@@ -417,6 +418,15 @@ struct RansacSettings {
     std::optional<long long> maximum_attempts;
 };
 
+// Temporal matching restricted to a window around each previous point's
+// projection into a predicted current camera (constant velocity).
+struct PredictionWindow {
+    Mat3 rotation;  // predicted current left camera, world to camera
+    Vec3 translation;
+    double radius_px;
+    std::size_t minimum_matches;  // fewer windowed matches: redo full matching
+};
+
 class Transition {
    public:
     Transition(const StereoFrame& previous, const StereoFrame& current, const cv::Mat& intrinsic,
@@ -457,8 +467,93 @@ class Transition {
         }
     }
 
+    // Reciprocal matches between both frames' stereo rows: windowed when a
+    // prediction is given and it finds enough matches, else over all rows.
+    void match_stereo_rows(const std::optional<PredictionWindow>& window) {
+        if (window) {
+            match_in_window(*window);
+            if (reciprocal_query_.size() >= window->minimum_matches) {
+                windowed_ = true;
+                return;
+            }
+            reciprocal_query_.clear();
+            reciprocal_train_.clear();
+            reciprocal_distance_.clear();
+        }
+        match_all_stereo_rows();
+    }
+
+    // Mutual nearest neighbours among the pairs whose current pixel lies within
+    // the window around the previous point's predicted pixel. Ties go to the
+    // lower index, as in brute-force matching.
+    void match_in_window(const PredictionWindow& window) {
+        const std::size_t back_count = previous_.inliers.size(), front_count = current_.inliers.size();
+        if (!back_count || !front_count) return;
+        const double radius = window.radius_px, radius_squared = radius * radius;
+        // Current stereo rows bucketed on a grid of radius-sized cells.
+        std::unordered_map<long long, std::vector<int>> grid;
+        const auto cell_key = [](long long cx, long long cy) { return (cx << 32) ^ (cy & 0xffffffffLL); };
+        std::vector<cv::Point2f> front_pixels(front_count);
+        for (std::size_t j = 0; j < front_count; ++j) {
+            const cv::Point2f& p = current_.left[static_cast<std::size_t>(current_.inliers[j].queryIdx)].pt;
+            front_pixels[j] = p;
+            grid[cell_key(static_cast<long long>(std::floor(p.x / radius)),
+                          static_cast<long long>(std::floor(p.y / radius)))]
+                .push_back(static_cast<int>(j));
+        }
+        struct Best {
+            int index = -1;
+            int distance = 0;
+            bool beaten_by(int d, int i) const { return index < 0 || d < distance || (d == distance && i < index); }
+        };
+        std::vector<Best> best_front(back_count), best_back(front_count);
+        const int bytes = previous_.left_descriptors.cols;
+        const double* k = k_.data();
+        for (std::size_t i = 0; i < back_count; ++i) {
+            const Vec3& x = cloud_[i];
+            const double* r = window.rotation.data();
+            const double c0 = r[0] * x[0] + r[1] * x[1] + r[2] * x[2] + window.translation[0];
+            const double c1 = r[3] * x[0] + r[4] * x[1] + r[5] * x[2] + window.translation[1];
+            const double c2 = r[6] * x[0] + r[7] * x[1] + r[8] * x[2] + window.translation[2];
+            if (!(c2 > 0.0) || !std::isfinite(c0) || !std::isfinite(c1)) continue;
+            const double u = (k[0] * c0 + k[1] * c1 + k[2] * c2) / c2;
+            const double v = (k[4] * c1 + k[5] * c2) / c2;
+            if (!std::isfinite(u) || !std::isfinite(v)) continue;
+            const auto cx = static_cast<long long>(std::floor(u / radius));
+            const auto cy = static_cast<long long>(std::floor(v / radius));
+            const std::uint8_t* query =
+                previous_.left_descriptors.ptr<std::uint8_t>(previous_.inliers[i].queryIdx);
+            for (long long gx = cx - 1; gx <= cx + 1; ++gx) {
+                for (long long gy = cy - 1; gy <= cy + 1; ++gy) {
+                    const auto cell = grid.find(cell_key(gx, gy));
+                    if (cell == grid.end()) continue;
+                    for (const int j : cell->second) {
+                        const double du = front_pixels[static_cast<std::size_t>(j)].x - u;
+                        const double dv = front_pixels[static_cast<std::size_t>(j)].y - v;
+                        if (du * du + dv * dv > radius_squared) continue;
+                        const int d = cv::hal::normHamming(
+                            query,
+                            current_.left_descriptors.ptr<std::uint8_t>(
+                                current_.inliers[static_cast<std::size_t>(j)].queryIdx),
+                            bytes);
+                        if (best_front[i].beaten_by(d, j)) best_front[i] = {j, d};
+                        if (best_back[static_cast<std::size_t>(j)].beaten_by(d, static_cast<int>(i)))
+                            best_back[static_cast<std::size_t>(j)] = {static_cast<int>(i), d};
+                    }
+                }
+            }
+        }
+        for (std::size_t i = 0; i < back_count; ++i) {
+            const Best& best = best_front[i];
+            if (best.index < 0 || best_back[static_cast<std::size_t>(best.index)].index != static_cast<int>(i)) continue;
+            reciprocal_query_.push_back(previous_.inliers[i].queryIdx);
+            reciprocal_train_.push_back(current_.inliers[static_cast<std::size_t>(best.index)].queryIdx);
+            reciprocal_distance_.push_back(static_cast<float>(best.distance));
+        }
+    }
+
     // FeatureFrontend.reciprocal_matches_on_rows on both frames' stereo rows.
-    void match_stereo_rows() {
+    void match_all_stereo_rows() {
         std::vector<int> back_rows, front_rows;
         for (const cv::DMatch& m : previous_.inliers) back_rows.push_back(m.queryIdx);
         for (const cv::DMatch& m : current_.inliers) front_rows.push_back(m.queryIdx);
@@ -617,6 +712,7 @@ class Transition {
         out["rotation"] = rotation;
         out["translation"] = translation;
         out["attempts"] = attempts_;
+        out["temporal_window_used"] = windowed_;
         out["random_state"] = random.state();
         return out;
     }
@@ -700,6 +796,7 @@ class Transition {
     std::vector<std::int64_t> best_;
     CameraModel model_{};
     long long attempts_ = 0;
+    bool windowed_ = false;
 };
 
 py::dict track_transition(const StereoFrame& previous, const StereoFrame& current,
@@ -713,7 +810,21 @@ py::dict track_transition(const StereoFrame& previous, const StereoFrame& curren
                           long long initial_remaining, std::size_t sample_size,
                           double maximum_distance_px, std::optional<long long> maximum_attempts,
                           const py::function& required_hypothesis_count,
-                          const std::vector<std::uint64_t>& random_state) {
+                          const std::vector<std::uint64_t>& random_state,
+                          const std::optional<DoubleArray>& predicted_rotation,
+                          const std::optional<DoubleArray>& predicted_translation,
+                          double window_radius_px, std::size_t window_minimum_matches) {
+    std::optional<PredictionWindow> window;
+    if (predicted_rotation.has_value() != predicted_translation.has_value()) {
+        throw std::invalid_argument("predicted rotation and translation go together");
+    }
+    if (predicted_rotation) {
+        if (!(window_radius_px > 0.0)) throw std::invalid_argument("window radius must be positive");
+        window = PredictionWindow{
+            to_mat3(copy_doubles(*predicted_rotation, 3, 3, "predicted rotation")),
+            to_vec3(copy_doubles(*predicted_translation, 3, 1, "predicted translation")),
+            window_radius_px, window_minimum_matches};
+    }
     const cv::Mat k = copy_doubles(intrinsic, 3, 3, "intrinsic");
     const cv::Mat p_left = copy_doubles(projection_left, 3, 4, "left projection");
     const cv::Mat p_right = copy_doubles(projection_right, 3, 4, "right projection");
@@ -730,7 +841,7 @@ py::dict track_transition(const StereoFrame& previous, const StereoFrame& curren
     {
         py::gil_scoped_release release;
         transition.triangulate(p_left, p_right);
-        transition.match_stereo_rows();
+        transition.match_stereo_rows(window);
         transition.build_consensus();
         transition.run_ransac({success_probability, initial_remaining, sample_size,
                                maximum_distance_px, maximum_attempts},
@@ -769,6 +880,9 @@ PYBIND11_MODULE(_native, module) {
     py::register_exception<ContractViolation>(module, "ContractViolation");
     module.def("opencv_version", [] { return std::string(CV_VERSION); });
     module.def("opencv_build_information", [] { return cv::getBuildInformation(); });
+    module.def("set_num_threads", [](int threads) { cv::setNumThreads(threads); }, py::arg("threads"),
+               "OpenCV worker threads of this module (its own pool, separate from pip cv2's).");
+    module.def("get_num_threads", [] { return cv::getNumThreads(); });
 
     py::class_<StereoFrame, std::shared_ptr<StereoFrame>>(module, "StereoFrame")
         .def_property_readonly("left_feature_count", [](const StereoFrame& f) { return f.left.size(); })
@@ -799,6 +913,8 @@ PYBIND11_MODULE(_native, module) {
                py::arg("success_probability"), py::arg("initial_remaining"), py::arg("sample_size"),
                py::arg("maximum_distance_px"), py::arg("maximum_attempts"),
                py::arg("required_hypothesis_count"), py::arg("random_state"),
+               py::arg("predicted_rotation") = py::none(), py::arg("predicted_translation") = py::none(),
+               py::arg("window_radius_px") = 0.0, py::arg("window_minimum_matches") = 0,
                "Triangulation, reciprocal matching on stereo rows, four-view consensus and VO RANSAC.");
     module.def("akaze_detect_and_compute", &akaze_detect_and_compute, py::arg("image"),
                py::arg("threshold"),

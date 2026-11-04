@@ -8,7 +8,7 @@ per-frame matrix products stay in numpy here, exactly as in the Python path.
 from __future__ import annotations
 
 import random
-from typing import Mapping
+from typing import Mapping, Optional
 
 import cv2
 import numpy as np
@@ -122,10 +122,15 @@ def native_transition(
     intrinsic: np.ndarray,
     fixed_right: np.ndarray,
     vo_ransac: Mapping[str, object],
+    predicted_pose: Optional[np.ndarray] = None,
+    window_radius_px: float = 0.0,
+    window_minimum_matches: int = 0,
 ):
     """One VO transition; returns the C++ result dict plus the four-camera model.
 
     Consumes Python's ``random`` state exactly as the Python RANSAC would.
+    With ``predicted_pose`` (current left world-to-camera), temporal matching
+    is restricted to ``window_radius_px`` around each predicted projection.
     """
 
     native = _module()
@@ -165,6 +170,10 @@ def native_transition(
             None if maximum_attempts is None else int(maximum_attempts),
             required_hypothesis_count,
             list(internal),
+            None if predicted_pose is None else predicted_pose[:3, :3],
+            None if predicted_pose is None else predicted_pose[:3, 3:],
+            float(window_radius_px),
+            int(window_minimum_matches),
         )
     except native.ContractViolation as error:
         raise ContractError(str(error)) from error

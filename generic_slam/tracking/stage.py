@@ -64,7 +64,7 @@ TRANSITION_FIELDS = (
     "current_stereo_row_count", "reciprocal_match_count", "consensus_count",
     "supporter_count", "supporter_percentage", "tracks_created",
     "tracks_extended", "tracks_terminated", "ransac_hypothesis_attempt_count",
-    "runtime_seconds",
+    "temporal_window_used", "runtime_seconds",
 )
 
 
@@ -143,6 +143,7 @@ class _TransitionStep:
     current_left_feature_count: int
     previous_stereo_row_count: int
     current_stereo_row_count: int
+    temporal_window_used: bool  # temporal matching restricted to the prediction window
 
 
 def _python_step(
@@ -228,15 +229,18 @@ def _python_step(
         current_left_feature_count=len(current_stereo.left.keypoints),
         previous_stereo_row_count=len(previous_stereo.inliers),
         current_stereo_row_count=len(current_stereo.inliers),
+        temporal_window_used=False,
     )
 
 
 def _native_step(
     previous, current, previous_pose: np.ndarray, intrinsic: np.ndarray,
     fixed_right: np.ndarray, vo_ransac: Mapping[str, object],
+    predicted_pose: Optional[np.ndarray], window_radius_px: float, window_minimum_matches: int,
 ) -> _TransitionStep:
     result, model, reciprocal = native_transition(
-        previous, current, previous_pose, intrinsic, fixed_right, vo_ransac
+        previous, current, previous_pose, intrinsic, fixed_right, vo_ransac,
+        predicted_pose, window_radius_px, window_minimum_matches,
     )
     return _TransitionStep(
         current_prepared=prepare_native_frame(current),
@@ -251,6 +255,7 @@ def _native_step(
         current_left_feature_count=int(current.left_feature_count),
         previous_stereo_row_count=int(previous.stereo_row_count),
         current_stereo_row_count=int(current.stereo_row_count),
+        temporal_window_used=bool(result["temporal_window_used"]),
     )
 
 
@@ -420,18 +425,25 @@ def run_tracking_stage(
         evidence_root = attempt / "transition_evidence"
         evidence_root.mkdir()
         vo_ransac = config.section("visual_odometry")["ransac"]
-        match_stereo_rows_only = (
-            frontend_config["temporal_matching"]["population"] == "stereo_rows"
-        )
+        temporal_matching = frontend_config["temporal_matching"]
+        match_stereo_rows_only = temporal_matching["population"] == "stereo_rows"
+        window_radius_px = temporal_matching["prediction_window_px"]
 
         for current_frame_id in range(1, frame_count):
             transition_started = time.perf_counter()
             previous_pose = world_to_camera[-1]
             current_stereo = next(frames)
             if native:
+                predicted_pose = None
+                if window_radius_px is not None and len(world_to_camera) >= 2:
+                    # Constant velocity: repeat the last relative motion.
+                    motion = previous_pose @ np.linalg.inv(world_to_camera[-2])
+                    predicted_pose = motion @ previous_pose
                 step = _native_step(
                     previous_stereo, current_stereo, previous_pose, intrinsic,
-                    fixed_right, vo_ransac,
+                    fixed_right, vo_ransac, predicted_pose,
+                    0.0 if window_radius_px is None else float(window_radius_px),
+                    int(temporal_matching["window_fallback_minimum_matches"]),
                 )
             else:
                 step = _python_step(
@@ -490,6 +502,7 @@ def run_tracking_stage(
                     "tracks_extended": len(extended),
                     "tracks_terminated": len(terminated),
                     "ransac_hypothesis_attempt_count": step.attempts,
+                    "temporal_window_used": int(step.temporal_window_used),
                     "runtime_seconds": time.perf_counter() - transition_started,
                 }
             )
