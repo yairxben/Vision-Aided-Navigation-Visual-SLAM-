@@ -41,6 +41,9 @@ DEFAULT_ALGORITHM_CONFIG: Dict[str, Any] = {
             # Below OpenCV's 0.001 default: on KITTI 00 this gives more
             # geometrically valid stereo matches than SIFT at ~2.5x the speed.
             "threshold": 0.0002,
+            # Native backend only: detect below the first crop_top_rows image
+            # rows (both stereo images). 0: the whole image.
+            "crop_top_rows": 0,
         },
         "orb": {
             "max_features": 3000,
@@ -231,6 +234,10 @@ def validate_algorithm_config(config: Mapping[str, Any]) -> None:
             "frontend.detector must be one of {}".format(", ".join(FEATURE_DETECTORS))
         )
     _number(frontend["akaze"]["threshold"], "frontend.akaze.threshold", minimum=0.0)
+    if _nonnegative_integer(frontend["akaze"]["crop_top_rows"], "frontend.akaze.crop_top_rows") and (
+        frontend["backend"] != "native"
+    ):
+        raise ContractError("frontend.akaze.crop_top_rows needs frontend.backend 'native'")
     _positive_integer(frontend["orb"]["max_features"], "frontend.orb.max_features")
     if _number(frontend["orb"]["scale_factor"], "frontend.orb.scale_factor") <= 1.0:
         raise ContractError("frontend.orb.scale_factor must be greater than 1")

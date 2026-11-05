@@ -58,6 +58,7 @@ class NativeFrontend:
         self._stereo_matching = str(stereo["matching"])
         self._row_band_uniqueness = str(stereo["row_band_uniqueness"])
         self._row_band_ratio = float(stereo["row_band_ratio"])
+        self._crop_top_rows = int(frontend_config["akaze"]["crop_top_rows"])
         self._native = _module()
 
     def extract_stereo(self, left_image: np.ndarray, right_image: np.ndarray):
@@ -69,6 +70,7 @@ class NativeFrontend:
                 left_image, right_image, self._threshold,
                 self._maximum_vertical_deviation_px, self._require_positive_disparity,
                 self._stereo_matching, self._row_band_uniqueness, self._row_band_ratio,
+                self._crop_top_rows,
             )
         except self._native.ContractViolation as error:
             raise ContractError(str(error)) from error
