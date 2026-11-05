@@ -1,0 +1,11 @@
+{
+  "frontend": {
+    "akaze": {
+      "threshold": 0.0002,
+      "sublevels": 4
+    },
+    "temporal_matching": {
+      "prediction_window_px": 40
+    }
+  }
+}

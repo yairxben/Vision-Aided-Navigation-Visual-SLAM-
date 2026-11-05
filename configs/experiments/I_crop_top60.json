@@ -1,0 +1,9 @@
+{
+  "frontend": {
+    "akaze": {
+      "threshold": 0.0002,
+      "sublevels": 4,
+      "crop_top_rows": 60
+    }
+  }
+}

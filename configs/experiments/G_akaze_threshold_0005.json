@@ -1,7 +1,8 @@
 {
   "frontend": {
     "akaze": {
-      "threshold": 0.0005
+      "threshold": 0.0005,
+      "sublevels": 4
     },
     "stereo": {
       "matching": "global_nearest"

@@ -1,0 +1,8 @@
+{
+  "frontend": {
+    "akaze": {
+      "threshold": 0.0002,
+      "sublevels": 3
+    }
+  }
+}
