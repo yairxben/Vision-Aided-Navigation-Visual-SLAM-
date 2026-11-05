@@ -38,16 +38,19 @@ DEFAULT_ALGORITHM_CONFIG: Dict[str, Any] = {
         # "sift": float descriptors, FLANN KD-tree matching (settings below).
         "detector": "akaze",
         "akaze": {
-            # Below OpenCV's 0.001 default: on KITTI 00 this gives more
-            # geometrically valid stereo matches than SIFT at ~2.5x the speed.
-            "threshold": 0.0002,
+            # Far below OpenCV's 0.001 default. With 2 sublevels (below) this
+            # restores the feature count that 4 sublevels give at 0.0002.
+            "threshold": 0.0001,
             # Native backend only: detect below the first crop_top_rows image
             # rows (both stereo images). 0: the whole image.
             "crop_top_rows": 0,
             # Scale space: octaves (image halvings) and sublevels per octave.
-            # OpenCV's defaults.
+            # Sublevels dominate the cost: 4 -> 2 makes extraction ~40% faster.
+            # On KITTI 00 (2 seeds, configs/experiments) 2 sublevels at
+            # threshold 0.0001 beat OpenCV's 4 at 0.0002 in PnP, Bundle and
+            # loop RMSE, with tracking ~26% faster. A 4th octave adds nothing.
             "octaves": 4,
-            "sublevels": 4,
+            "sublevels": 2,
         },
         "orb": {
             "max_features": 3000,
