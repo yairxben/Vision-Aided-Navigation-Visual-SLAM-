@@ -207,18 +207,19 @@ struct StereoFrame {
     std::size_t raw_match_count = 0;
 };
 
-cv::Ptr<cv::AKAZE> make_akaze(double threshold) {
-    // cv2.AKAZE_create(threshold=...) with every other argument at its default.
-    return cv::AKAZE::create(cv::AKAZE::DESCRIPTOR_MLDB, 0, 3, static_cast<float>(threshold), 4, 4,
-                             cv::KAZE::DIFF_PM_G2);
+cv::Ptr<cv::AKAZE> make_akaze(double threshold, int octaves = 4, int sublevels = 4) {
+    // cv2.AKAZE_create(threshold=..., nOctaves=..., nOctaveLayers=...), other arguments
+    // at their defaults.
+    return cv::AKAZE::create(cv::AKAZE::DESCRIPTOR_MLDB, 0, 3, static_cast<float>(threshold), octaves,
+                             sublevels, cv::KAZE::DIFF_PM_G2);
 }
 
 // AKAZE on the image below its first crop_top_rows rows, keypoints in full-image
 // coordinates. Cropping (unlike a mask) also skips those rows' scale space; it
 // changes AKAZE's contrast factor, so every detection can move.
-void detect_below(const cv::Mat& image, int crop_top_rows, double threshold,
+void detect_below(const cv::Mat& image, int crop_top_rows, double threshold, int octaves, int sublevels,
                   std::vector<cv::KeyPoint>& keypoints, cv::Mat& descriptors) {
-    make_akaze(threshold)->detectAndCompute(image.rowRange(crop_top_rows, image.rows), cv::noArray(),
+    make_akaze(threshold, octaves, sublevels)->detectAndCompute(image.rowRange(crop_top_rows, image.rows), cv::noArray(),
                                             keypoints, descriptors);
     for (cv::KeyPoint& keypoint : keypoints) keypoint.pt.y += static_cast<float>(crop_top_rows);
 }
@@ -298,7 +299,8 @@ std::shared_ptr<StereoFrame> extract_stereo(const ByteArray& left_image, const B
                                             bool require_positive_disparity,
                                             const std::string& stereo_matching,
                                             const std::string& row_band_uniqueness,
-                                            double row_band_ratio, int crop_top_rows) {
+                                            double row_band_ratio, int crop_top_rows,
+                                            int octaves, int sublevels) {
     if (stereo_matching != "global_nearest" && stereo_matching != "row_band") {
         throw std::invalid_argument("unsupported stereo matching: " + stereo_matching);
     }
@@ -313,13 +315,14 @@ std::shared_ptr<StereoFrame> extract_stereo(const ByteArray& left_image, const B
     if (crop_top_rows < 0 || crop_top_rows >= std::min(left_view.rows, right_view.rows)) {
         throw std::invalid_argument("crop_top_rows must be in [0, image rows)");
     }
+    if (octaves < 1 || sublevels < 1) throw std::invalid_argument("octaves and sublevels must be positive");
     auto frame = std::make_shared<StereoFrame>();
     py::gil_scoped_release release;
     // The right image is detected on a second thread, as in the Python frontend.
     auto right = std::async(std::launch::async, [&] {
-        detect_below(right_view, crop_top_rows, threshold, frame->right, frame->right_descriptors);
+        detect_below(right_view, crop_top_rows, threshold, octaves, sublevels, frame->right, frame->right_descriptors);
     });
-    detect_below(left_view, crop_top_rows, threshold, frame->left, frame->left_descriptors);
+    detect_below(left_view, crop_top_rows, threshold, octaves, sublevels, frame->left, frame->left_descriptors);
     right.get();
     if (frame->left_descriptors.empty()) {
         throw ContractViolation("feature detector produced no descriptors for left stereo image");
@@ -915,7 +918,7 @@ PYBIND11_MODULE(_native, module) {
                py::arg("threshold"), py::arg("maximum_vertical_deviation_px"),
                py::arg("require_positive_disparity"), py::arg("stereo_matching") = "global_nearest",
                py::arg("row_band_uniqueness") = "mutual", py::arg("row_band_ratio") = 0.8,
-               py::arg("crop_top_rows") = 0,
+               py::arg("crop_top_rows") = 0, py::arg("octaves") = 4, py::arg("sublevels") = 4,
                "AKAZE on both images and their stereo matches (frontend.stereo semantics).");
     module.def("track_transition", &track_transition, py::arg("previous"), py::arg("current"),
                py::arg("projection_left"), py::arg("projection_right"), py::arg("intrinsic"),

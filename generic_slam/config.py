@@ -44,6 +44,10 @@ DEFAULT_ALGORITHM_CONFIG: Dict[str, Any] = {
             # Native backend only: detect below the first crop_top_rows image
             # rows (both stereo images). 0: the whole image.
             "crop_top_rows": 0,
+            # Scale space: octaves (image halvings) and sublevels per octave.
+            # OpenCV's defaults.
+            "octaves": 4,
+            "sublevels": 4,
         },
         "orb": {
             "max_features": 3000,
@@ -238,6 +242,8 @@ def validate_algorithm_config(config: Mapping[str, Any]) -> None:
         frontend["backend"] != "native"
     ):
         raise ContractError("frontend.akaze.crop_top_rows needs frontend.backend 'native'")
+    _positive_integer(frontend["akaze"]["octaves"], "frontend.akaze.octaves")
+    _positive_integer(frontend["akaze"]["sublevels"], "frontend.akaze.sublevels")
     _positive_integer(frontend["orb"]["max_features"], "frontend.orb.max_features")
     if _number(frontend["orb"]["scale_factor"], "frontend.orb.scale_factor") <= 1.0:
         raise ContractError("frontend.orb.scale_factor must be greater than 1")

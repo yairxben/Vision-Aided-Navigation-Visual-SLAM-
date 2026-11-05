@@ -60,8 +60,11 @@ def create_detector(frontend_config: Mapping[str, object]) -> cv2.Feature2D:
 
     detector = frontend_config["detector"]
     if detector == "akaze":
+        akaze = frontend_config["akaze"]
         return cv2.AKAZE_create(
-            threshold=float(frontend_config["akaze"]["threshold"])
+            threshold=float(akaze["threshold"]),
+            nOctaves=int(akaze["octaves"]),
+            nOctaveLayers=int(akaze["sublevels"]),
         )
     if detector == "orb":
         orb = frontend_config["orb"]
