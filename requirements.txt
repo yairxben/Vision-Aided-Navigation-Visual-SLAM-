@@ -2,4 +2,4 @@
 gtsam==4.2
 matplotlib==3.7.5
 numpy==1.24.4
-opencv-python==4.10.0.84
+opencv-python-headless==4.12.0.88
