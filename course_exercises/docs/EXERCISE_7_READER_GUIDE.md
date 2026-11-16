@@ -27,20 +27,13 @@ camera discovered a new area.
 
 | File | Responsibility and major entry points | Intentionally does not own |
 | --- | --- | --- |
-| `ex7.py` | Safe CLI dispatch: `preflight`, `tests`, guarded `run`, `validate`, `report`, `submission`, and ordered `all` | Candidate mathematics, matching, Bundle construction, or graph optimization |
+| `ex7.py` | Safe CLI dispatch: `preflight`, guarded `run`, `validate`, `report`, `submission`, and ordered `all` | Candidate mathematics, matching, Bundle construction, or graph optimization |
 | `exercise7_candidate_detection.py` | Coherent E5/E6 loading, directed covariance graph, course covariance-path heuristic, and GTSAM Mahalanobis scoring | Temporal policy, image matching, or acceptance |
 | `exercise7_consensus_matching.py` | Stereo and reciprocal temporal matching, four-view consensus, bounded PnP/RANSAC, supporter evidence, and the 30/30/30 match gate | Small Bundle measurement or Pose Graph mutation |
 | `exercise7_small_bundle.py` | Two-pose stereo Bundle and raw conditional end-given-start covariance extraction | Cumulative graph insertion or global optimization |
 | `exercise7_pose_graph_update.py` | Explicit E5/E6 bootstrap and transactional one-factor cumulative Pose Graph update | Candidate selection, matching, or artifact scheduling |
 | `exercise7_sequential_loop_closure.py` | Frozen production policy, per-current orchestration, cumulative state, evidence, sealing, replay, and final scientific reports | CLI safety boundary or the later report-freeze package |
 | `exercise7_report_freeze.py` | Read-only loading of sealed results, presentation figures, scalar summaries, traceability, and curated submission packaging | Any new matching, RANSAC, Bundle, Pose Graph optimization, or Marginals construction |
-
-The focused `test_ex7_*.py` files are useful executable navigation aids. In
-particular, candidate detection, consensus/RANSAC, small-Bundle integration,
-cumulative transactions, sequential sealing, compatibility imports, and
-report-only math each have focused coverage. The `validate_ex7_*.py` programs
-preserve the bounded milestone and independent stored-evidence validation
-contracts; they are validators, not alternate implementations.
 
 ## 3. Core conventions
 
@@ -477,8 +470,6 @@ A concise reading order for a grader or student is:
    scientific-computation/publication boundary.
 6. Finish with `exercise7_report_freeze.py` to see how sealed scientific
    evidence becomes presentation and submission material without a rerun.
-7. Use the focused tests and validators to inspect individual invariants or
-   replay guarantees.
 
 Exact source line numbers are intentionally omitted because traceability line
 locations should be refreshed only after the final documentation/reporting

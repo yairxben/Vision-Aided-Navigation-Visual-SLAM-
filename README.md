@@ -80,9 +80,9 @@ Readable results (`summary.md`, figures, statistics, resolved config) are copied
 
 ## Course exercises
 
-`course_exercises/` is the frozen course submission. Its files are byte-identical to the submitted versions, so recorded source hashes stay valid. Run its scripts from inside that folder (for example `cd course_exercises && python ex7.py`); it expects `dataset/` and `diagnostics/` inside `course_exercises/`. Detailed reader guides for exercises 4–7 are in `course_exercises/docs/`. On the canonical course run of sequence 00 (3,360 frames, 356 keyframes, 355 Bundle windows) it accepted 6 Loop Closure constraints.
+`course_exercises/` is the frozen course submission. Its exercise code is unchanged from the submitted version, except that the course's unit tests and validation scripts (and the `tests` commands of `ex5.py` and `ex7.py`) were removed to keep the folder readable; they remain available under the tag `course-version-2025`. Run its scripts from inside that folder (for example `cd course_exercises && python ex7.py`); it expects `dataset/` and `diagnostics/` inside `course_exercises/`. Detailed reader guides for exercises 4–7 are in `course_exercises/docs/`. On the canonical course run of sequence 00 (3,360 frames, 356 keyframes, 355 Bundle windows) it accepted 6 Loop Closure constraints.
 
-The diagrams below show the main execution and reading flow, not an exhaustive import tree; tests, validators and retained experimental helpers are omitted.
+The diagrams below show the main execution and reading flow, not an exhaustive import tree; retained experimental helpers are omitted.
 
 ### Exercises 1–2 — Foundations
 

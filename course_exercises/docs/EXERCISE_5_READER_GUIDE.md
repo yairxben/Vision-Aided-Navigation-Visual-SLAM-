@@ -55,14 +55,8 @@ For the canonical path, read the files in this order:
 9. `exercise5_submission.py` -- fail-closed materialization of the curated
    Bundle submission package.
 
-The supporting tests and validators are best read after the runtime path:
-`test_ex5_geometry.py`, `test_ex5_bundle_window.py`,
-`test_ex5_streaming.py`, `validate_ex5_single_window.py`,
-`validate_ex5_covariance_contract.py`, `test_ex5_reporting.py`, and
-`test_ex5_submission_reporting.py`.
-
-`exercise5_track_survival.py`, `exercise5_track_survival_082_config.json`, and
-`test_ex5_track_survival.py` document a completed but rejected keyframe-policy
+`exercise5_track_survival.py` and `exercise5_track_survival_082_config.json`
+document a completed but rejected keyframe-policy
 experiment. They are not part of the selected production path. The older
 `BundleWindow.py` and `BundleAdjustment.py` files are legacy course code; they
 are neither the canonical implementation nor the path invoked by `ex5.py`.
@@ -380,47 +374,13 @@ package, and only then promotes it. The immutable scientific root remains the
 source of truth; the curated package is a smaller reader-facing selection, not
 a replacement scientific run.
 
-## 10. Tests and validation files
-
-Tests and validators protect contracts; they are not runtime stages of a
-normal 355-window solve.
-
-| File | What it protects |
-|---|---|
-| `test_ex5_geometry.py` | Deterministic world/camera/window transform directions, GTSAM `Pose3` semantics, stereo calibration and measurement ordering, projection invariance, factor-error behavior, and the canonical companion contract. |
-| `test_ex5_bundle_window.py` | Synthetic single-window keys and factors, input/observation validation, landmark backprojection and depth eligibility, graph connectivity, noise dimensions, error metrics, diagnostics, and underconstraint rejection. |
-| `validate_ex5_single_window.py` | A fresh-process bounded canonical-input single-window validation with explicitly nonproduction probe settings. |
-| `test_ex5_streaming.py` | Frozen configuration and schema checks; ordered covariance extraction; memory, sealing, resume, quarantine, manifest, aggregation, report, submission, and CLI safety gates using bounded or temporary evidence. |
-| `validate_ex5_covariance_contract.py` | The read-only E5-I04 tangent/covariance validation over synthetic evidence, historical window 0, and all 355 historical endpoint covariance artifacts. Its defaults remain on the protected historical E5 root. |
-| `test_ex5_covariance_contract.py` | Focused executable coverage for the covariance-contract validator helpers. |
-| `test_ex5_track_survival.py` | Deterministic behavior and contract rejection for the sole 0.82 track-survival experiment. That experiment was completed and rejected; this is not production keyframe selection. |
-| `test_ex5_reporting.py` | Full-row CSV validation, plotting input consistency, and the current 13-figure report output using temporary evidence. |
-| `test_ex5_submission_reporting.py` | Staged curated-package validation, inclusion of the three post-run figures, required artifacts, and fail-closed behavior using temporary destinations. |
-
-`python ex5.py tests` currently invokes exactly these four unittest files:
-
-```text
-test_ex5_geometry.py
-test_ex5_bundle_window.py
-test_ex5_streaming.py
-test_ex5_track_survival.py
-```
-
-It does not invoke `test_ex5_reporting.py`,
-`test_ex5_submission_reporting.py`, `validate_ex5_single_window.py`, or
-`validate_ex5_covariance_contract.py`. Those focused suites/validators must be
-run explicitly when relevant; their existence should not be confused with the
-CLI's current `tests` selection.
-
-## 11. Running Exercise 5
+## 10. Running Exercise 5
 
 The current parser exposes the commands below. Use the repository's isolated
 environment:
 
 ```bash
 .venv/bin/python ex5.py --help
-.venv/bin/python ex5.py tests
-.venv/bin/python ex5.py tests --verbose
 ```
 
 Validation is read-only with respect to a run root:

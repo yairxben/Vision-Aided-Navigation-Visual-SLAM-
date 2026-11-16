@@ -8,13 +8,12 @@ command surface:
 
 * ``preflight`` checks selected E5/E6 inputs and the E7 output lane without
   writing or running Exercise 7 science;
-* ``tests`` runs the focused contract suite;
 * explicitly confirmed ``run`` delegates to the sequential scientific runner;
 * ``validate`` independently replays already sealed scientific evidence;
 * ``report`` reads sealed evidence to produce presentation artifacts; and
 * ``submission`` materializes the curated package from the report freeze.
 
-``all`` performs tests, validation, report generation, and submission in that
+``all`` performs validation, report generation, and submission in that
 order; it does not include ``run``.  Every delegated command receives the same
 selected E5, E6, and E7 roots so clean and historical provenance cannot be
 mixed accidentally.
@@ -24,8 +23,6 @@ from __future__ import annotations
 
 import argparse
 import json
-import subprocess
-import sys
 from pathlib import Path
 from typing import Mapping, Optional, Sequence, Tuple
 
@@ -38,15 +35,6 @@ DEFAULT_SUBMISSION_ROOT = (
     REPOSITORY_ROOT / "project_submission/loop_closure_clean_final"
 )
 CANONICAL_RUN_CONFIRMATION = "I_UNDERSTAND_THIS_RUNS_E7_CLEAN_FINAL"
-FOCUSED_TEST_FILES = (
-    "test_ex7_candidate_detection.py",
-    "test_ex7_compatibility.py",
-    "test_ex7_consensus_matching.py",
-    "test_ex7_loop_integration.py",
-    "test_ex7_pose_graph_update.py",
-    "test_ex7_sequential_loop_closure.py",
-    "test_ex7_report_freeze.py",
-)
 
 
 def preflight_exercise7(
@@ -113,30 +101,6 @@ def materialize_loop_closure_submission(
     )
 
 
-def run_focused_exercise7_tests() -> Mapping[str, object]:
-    """Run the focused Exercise 7 contract tests in one isolated process."""
-
-    command = [
-        sys.executable,
-        "-m",
-        "unittest",
-        "-v",
-        *FOCUSED_TEST_FILES,
-    ]
-    completed = subprocess.run(command, cwd=REPOSITORY_ROOT, check=False)
-    if completed.returncode:
-        raise RuntimeError(
-            "focused Exercise 7 tests failed with exit code {}".format(
-                completed.returncode
-            )
-        )
-    return {
-        "command": "tests",
-        "status": "pass",
-        "test_files": list(FOCUSED_TEST_FILES),
-    }
-
-
 def validate_canonical_exercise7(
     *,
     e5_root: Path = DEFAULT_E5_ROOT,
@@ -180,8 +144,6 @@ def dispatch_command(arguments: argparse.Namespace) -> Mapping[str, object]:
     """
 
     e5_root, e6_root, scientific_root = _selected_roots(arguments)
-    if arguments.command == "tests":
-        return run_focused_exercise7_tests()
     if arguments.command == "preflight":
         return preflight_exercise7(
             e5_root=e5_root,
@@ -216,7 +178,7 @@ def dispatch_command(arguments: argparse.Namespace) -> Mapping[str, object]:
             scientific_root=scientific_root,
         )
     if arguments.command == "all":
-        results = {"tests": run_focused_exercise7_tests()}
+        results = {}
         results["validate"] = validate_canonical_exercise7(
             e5_root=e5_root,
             e6_root=e6_root,
@@ -260,7 +222,7 @@ def build_argument_parser() -> argparse.ArgumentParser:
 
     parser = argparse.ArgumentParser(
         description=(
-            "Exercise 7: test and validate the sealed run, then generate "
+            "Exercise 7: validate the sealed run, then generate "
             "report-ready and curated submission evidence"
         )
     )
@@ -268,7 +230,6 @@ def build_argument_parser() -> argparse.ArgumentParser:
         "command",
         choices=(
             "preflight",
-            "tests",
             "validate",
             "report",
             "submission",
@@ -276,10 +237,10 @@ def build_argument_parser() -> argparse.ArgumentParser:
             "run",
         ),
         help=(
-            "preflight: write-free clean-run gate; tests: focused suite; "
+            "preflight: write-free clean-run gate; "
             "validate: independent sealed-run replay; "
             "report: non-destructive report freeze; submission: curated "
-            "package; all: tests then validation then report then submission; "
+            "package; all: validation then report then submission; "
             "run: explicitly confirmed delegation to the canonical runner"
         ),
     )

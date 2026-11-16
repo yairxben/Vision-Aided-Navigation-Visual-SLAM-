@@ -1,7 +1,6 @@
 """Explicit command-line boundary for the Exercise 5 Bundle workflow.
 
-The CLI contains no Bundle science.  It dispatches bounded tests, read-only
-validation, post-run aggregation/reporting, curated submission materialization,
+The CLI contains no Bundle science.  It dispatches read-only validation, post-run aggregation/reporting, curated submission materialization,
 and separately confirmed scientific computations to their owning modules.
 The track-survival commands are retained only for the completed rejected
 experiment.
@@ -11,8 +10,6 @@ from __future__ import annotations
 
 import argparse
 import json
-import subprocess
-import sys
 from pathlib import Path
 
 from exercise5_aggregation import aggregate_all
@@ -44,11 +41,6 @@ def _parser() -> argparse.ArgumentParser:
         description="Canonical, explicit Exercise 5 Bundle workflows"
     )
     subparsers = parser.add_subparsers(dest="command")
-
-    tests = subparsers.add_parser(
-        "tests", help="run bounded E5-I01/I02/I03A contract tests"
-    )
-    tests.add_argument("--verbose", action="store_true")
 
     probe = subparsers.add_parser(
         "probe", help="solve exactly the frozen first window under /tmp"
@@ -114,25 +106,6 @@ def _parser() -> argparse.ArgumentParser:
     return parser
 
 
-def _run_tests(verbose: bool) -> dict:
-    """Run the four bounded contract suites selected by ``ex5.py tests``."""
-
-    command = [
-        sys.executable,
-        "-m",
-        "unittest",
-        "-v" if verbose else "-q",
-        "test_ex5_geometry.py",
-        "test_ex5_bundle_window.py",
-        "test_ex5_streaming.py",
-        "test_ex5_track_survival.py",
-    ]
-    completed = subprocess.run(command, cwd=str(ROOT), check=False)
-    if completed.returncode:
-        raise SystemExit(completed.returncode)
-    return {"status": "pass", "command": command}
-
-
 def main(argv=None) -> int:
     """Parse one command, execute its owning workflow, and print JSON output."""
 
@@ -141,9 +114,7 @@ def main(argv=None) -> int:
     if args.command is None:
         parser.print_help()
         return 0
-    if args.command == "tests":
-        result = _run_tests(args.verbose)
-    elif args.command == "probe":
+    if args.command == "probe":
         # The probe is still a real one-window solve; its /tmp gate is enforced
         # by run_streamed rather than duplicated in this thin dispatcher.
         result = run_streamed(

@@ -31,10 +31,6 @@ diagnostics/ex5_clean_final
   follows the flow above and applies the established numerical checks.
 - `exercise6_reporting.py` serializes the already-computed values and creates
   E6 tables and figures. It contains no second Pose Graph implementation.
-- `test_ex6_pose_graph.py` protects the synthetic chain, clean Exercise 5
-  contract, graph structure, factor ordering, conventions, initialization,
-  and, when the optional historical E5 fixture is available,
-  clean-versus-historical endpoint equivalence.
 
 The graph contains 356 `Pose3` variables, one identity
 `PriorFactorPose3`, and 355 consecutive `BetweenFactorPose3` factors. It has
@@ -112,7 +108,6 @@ Line numbers below describe the accepted E6 source layout for this clean run.
 | First-Bundle covariance plot | `exercise6_reporting.py` | `plot_first_bundle_camera_covariances` | 103 |
 | Pose Graph Marginals/covariance plot | `exercise6_reporting.py` | `plot_pose_graph_with_marginals` | 158 |
 | Visualization-only `x0.01` copies | `exercise6_reporting.py` | `create_visualization_only_covariance_figures` | 355 |
-| Focused scientific and input-equivalence tests | `test_ex6_pose_graph.py` | `SyntheticPoseGraphChainTest`; `CanonicalPoseGraphContractTest` | 33; 79 |
 
 ## Figure generators
 

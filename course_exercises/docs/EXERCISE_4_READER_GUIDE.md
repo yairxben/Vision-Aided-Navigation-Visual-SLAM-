@@ -42,10 +42,6 @@ Exercise 5 Bundle Adjustment input
 7. `tools.py` — consult the shared Exercise 3 primitives named in the stage map
    below; it is a dependency rather than the Exercise 4 entry point.
 
-The `test_ex4_*.py` files are focused regression and presentation tests. They
-help verify contracts and stage ordering, but they are not part of the runtime
-scientific pipeline.
-
 ## 3. Algorithm and pipeline map
 
 ```text
@@ -173,20 +169,7 @@ the FrameId-aligned world-to-camera pose sequence and verified artifact
 identity. Exercise 5 adapts these inputs without modifying the lecturer
 `TrackingDB`.
 
-## 8. Tests
-
-- `test_ex4_workflow.py` checks reader-facing imports, thin wrapper/CLI
-  compatibility, command availability, and output-safety behavior.
-- `test_ex4_database_builder_presentation.py` checks the scientific transition
-  stage order, PnP/RANSAC counter restoration, supporter-only insertion, track
-  lifecycle evidence, and transition field order.
-- `test_ex4_analysis_presentation.py` checks public analysis signatures, the
-  analysis-stage order, and fixed metric-table names, columns, and write order.
-
-These tests protect the implementation and its presentation contracts; they
-are not required reading for the primary scientific execution path.
-
-## 9. Running Exercise 4
+## 8. Running Exercise 4
 
 Run commands from the repository root. The generic command forms are:
 
